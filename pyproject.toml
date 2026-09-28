@@ -1,0 +1,36 @@
+[project]
+name = "sezzle-support-agent"
+version = "0.1.0"
+description = "LLM-powered shopper-support assistant (Sezzle take-home)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "google-genai>=2.25,<3",
+    "pydantic>=2,<3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.uv]
+# Not an installable package: run_cases.py and the tests import `support_agent` from src/.
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+# Planning evidence (docs/planning/) is a frozen record, not project code.
+extend-exclude = ["docs/planning"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = ["live: real LLM calls, skipped by default"]
+addopts = "-m 'not live'"
