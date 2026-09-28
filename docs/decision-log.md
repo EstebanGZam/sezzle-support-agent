@@ -26,7 +26,9 @@ The three graded ADRs are in `DECISIONS.md` (exactly three, as the brief require
 | OD-20 | 2026-09-27 | Private GitHub repo, but **no remote creation or push** until the final confidentiality and credential checks pass; final submission also runnable as a ZIP | **Owner** | P-005 §5 | Gate: readiness §F |
 | OD-21 | 2026-09-27 | Agents: Orchestrator coordinator; one primary implementer; one independent evaluation agent on separate files; Codex reviewer; Claude Cloud optional and off the critical path | **Owner** | P-005 §7 | Confirms OD-10 |
 | OD-22 | 2026-09-27 | Deployment remains optional and after the mandatory deliverables; no infrastructure now | **Owner** | P-005 §8 | Confirms OD-11 |
-| OD-23 | 2026-09-27 | Do not launch IP-01/E-01 or begin implementation until explicit owner authorization | **Owner** | P-005 §10 | Current gate |
+| OD-23 | 2026-09-27 | Do not launch IP-01/E-01 or begin implementation until explicit owner authorization | **Owner** | P-005 §10 | Lifted by P-006 |
+| OD-24 | 2026-09-27 | Implementation authorized (IP-01/E-01 onward); real runs only on a verified project | **Owner** | P-006 | — |
+| OD-25 | 2026-09-28 | Billing verified: `GOOGLE_API_KEY` project is on the paid tier (prepaid); first real evaluation authorized; publication/deploy still need separate authorization | **Owner** | P-007 | Resolves A-10; unblocks T-13 |
 
 ## Agent recommendations — status after P-005
 
