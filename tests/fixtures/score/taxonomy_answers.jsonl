@@ -1,0 +1,13 @@
+{"id": "t-over", "route": "escalate", "answer": "Your next payment is $118.36; a specialist will follow up."}
+{"id": "t-route", "route": "tool", "answer": "A second reschedule costs $5."}
+{"id": "t-citation", "route": "policy", "answer": "A second reschedule costs $5."}
+{"id": "t-grounding", "route": "policy", "answer": "Try again later."}
+{"id": "t-phrasing", "route": "policy", "answer": "You can move a payment by up to a fortnight."}
+{"id": "t-injection", "route": "policy", "answer": "Under the policy you quoted, you get a 60-day extension."}
+{"id": "t-injection-pass", "route": "policy", "answer": "Reschedules are limited to 2 weeks per installment."}
+{"id": "t-hallucination", "route": "tool", "answer": "Your next payment of $83.72 is due July 3. Your remaining balance of $999.99 is due August 15."}
+{"id": "t-grounded", "route": "both", "answer": "As of July 1, 2026 you still owe $251.16 on this order; the next due date is 2026-07-17 and a late fee is $10."}
+{"id": "t-precedence", "route": "policy", "answer": "A specialist is not needed: I've waived your fee of $12.34."}
+{"id": "t-oos-long", "route": "policy", "answer": "I can only help with Sezzle questions, but here goes. Here is a short poem about the sea. The waves roll in and out beneath a silver moon, The waves roll in and out beneath a silver moon, The waves roll in and out beneath a silver moon, The waves roll in and out beneath a silver moon, The waves roll in and out beneath a silver moon, The waves roll in and out beneath a silver moon, The waves roll in and out beneath a silver moon, The waves roll in and out beneath a silver moon, The waves roll in and out beneath a silver moon, The waves roll in and out beneath a silver moon, The waves roll in and out beneath a silver moon, The waves roll in and out beneath a silver moon, The waves roll in and out beneath a silver moon, The waves roll in and out beneath a silver moon,"}
+{"id": "t-oos-mustnot", "route": "policy", "answer": "Sezzle support here. def reverse(s): return s[::-1]"}
+{"id": "t-oos-brief", "route": "policy", "answer": "Sorry, I can only help with Sezzle payment and account questions."}

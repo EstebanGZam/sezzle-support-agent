@@ -1,0 +1,2 @@
+{"id": "t-route", "cited_policies": ["POL-02"], "validator": [{"check": "citation", "verdict": "pass", "detail": ""}], "error_class": null}
+{"id": "t-citation", "cited_policies": [], "validator": [{"check": "citation", "verdict": "warn", "detail": "unknown id dropped"}], "error_class": null}
