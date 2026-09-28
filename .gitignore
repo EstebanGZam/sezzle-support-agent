@@ -1,0 +1,25 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Local scratch runs (committed eval runs live under evals/runs/)
+*.trace.jsonl
+!evals/runs/**/*.jsonl
+/tmp/
+*.zip
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
