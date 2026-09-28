@@ -1,0 +1,81 @@
+{
+  "run_id": "golden",
+  "run_date": "2026-09-28T19:38:30+00:00",
+  "git_sha": "2750afa324c6fdd58130c52e39d29d92fa8caebc",
+  "git_dirty": true,
+  "provider": "gemini",
+  "primary_model": "gemini-3.5-flash-lite",
+  "fallback_model": "gemini-3.1-flash-lite",
+  "allow_unverified_model": false,
+  "temperature": null,
+  "thinking_level": "minimal",
+  "max_output_tokens": 600,
+  "timeout_s": 10.0,
+  "llm_max_attempts": 3,
+  "retry_policy": {
+    "rate_limit_minute": {
+      "same_model_retry": true,
+      "fallback": true
+    },
+    "quota_daily": {
+      "same_model_retry": false,
+      "fallback": true
+    },
+    "overloaded": {
+      "same_model_retry": false,
+      "fallback": true
+    },
+    "server_5xx": {
+      "same_model_retry": true,
+      "fallback": true
+    },
+    "timeout": {
+      "same_model_retry": true,
+      "fallback": true
+    },
+    "model_not_found": {
+      "same_model_retry": false,
+      "fallback": true
+    },
+    "bad_request": {
+      "same_model_retry": false,
+      "fallback": false
+    },
+    "auth_billing": {
+      "same_model_retry": false,
+      "fallback": false
+    },
+    "blocked_safety": {
+      "same_model_retry": false,
+      "fallback": false
+    }
+  },
+  "max_llm_calls_per_batch": 2000,
+  "input_char_cap": 2000,
+  "fake_llm_script": null,
+  "prompt_version": "3103d85377df1a31",
+  "corpus_hash": "632cfd55bb12613e2498b0b889b188e1f726431de1c02b616fc38809ef9eac19",
+  "today": "2026-07-01",
+  "case_files": {
+    "cases/golden_visible.jsonl": "aedd3b37fcf10893d70645cf604ffbd54bd1d706a4329c536d66cfa602999e5d"
+  },
+  "answers_path": "evals/runs/002_resilience/golden/answers.jsonl",
+  "trace_path": "evals/runs/002_resilience/golden/trace.jsonl",
+  "credential_env_var": "GOOGLE_API_KEY",
+  "credential_fingerprint": "53408af16a25",
+  "holdout_contaminated": false,
+  "results": {
+    "cases": 10,
+    "safe_failures": 9,
+    "error_classes": {
+      "overloaded": 8,
+      "timeout": 1
+    },
+    "routes": {
+      "escalate": 10
+    },
+    "llm_semantic_calls": 11,
+    "circuit_breaker_open": false,
+    "exit_code": 0
+  }
+}
