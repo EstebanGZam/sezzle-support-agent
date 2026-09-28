@@ -1,0 +1,10 @@
+{"id": "v01", "route": "tool", "answer": "Your next payment of $118.36 for your Nordic Kicks order is due on July 11, 2026."}
+{"id": "v02", "route": "escalate", "answer": "I'm sorry — I can't complete this request right now. I'm connecting you with a Sezzle support specialist who can help."}
+{"id": "v03", "route": "escalate", "answer": "I'm sorry — I can't complete this request right now. I'm connecting you with a Sezzle support specialist who can help."}
+{"id": "v04", "route": "escalate", "answer": "I'm sorry — I can't complete this request right now. I'm connecting you with a Sezzle support specialist who can help."}
+{"id": "v05", "route": "escalate", "answer": "I'm sorry — I can't complete this request right now. I'm connecting you with a Sezzle support specialist who can help."}
+{"id": "v06", "route": "escalate", "answer": "I'm sorry — I can't complete this request right now. I'm connecting you with a Sezzle support specialist who can help."}
+{"id": "v07", "route": "escalate", "answer": "I'm sorry — I can't complete this request right now. I'm connecting you with a Sezzle support specialist who can help."}
+{"id": "v08", "route": "policy", "answer": "Sezzle does not charge interest if you pay on time. We also do not charge any fees for on-time payments."}
+{"id": "v09", "route": "escalate", "answer": "I am an automated support assistant and cannot resolve this. Please change your account password and enable 2FA immediately for your security. I am passing this matter to a support specialist who can investigate this unauthorized charge further."}
+{"id": "v10", "route": "both", "answer": "I have looked into your order with Circuit City Lights. Your refund for $185.19 was issued on June 28, 2026. Refunds typically take 3 to 10 business days to appear on your original payment method after being processed by Sezzle. Since it has been 3 business days, please allow a little more time for the funds to reflect in your account. If the refund does not appear after 10 business days, please let me know, and I can connect you with a support specialist to look into this further."}
