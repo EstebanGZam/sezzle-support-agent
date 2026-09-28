@@ -270,6 +270,23 @@ def test_fraud_mode_withholds_the_tool(resources, statics):
     assert result.route == "escalate"
 
 
+def test_fraud_answer_naming_a_merchant_the_shopper_typed_is_repaired(resources, statics):
+    """SEC-11 (R-01 #1): the merchant is withheld from a fraud answer even when the shopper named
+    it; the first answer fails validation and the repaired one is returned."""
+    merchant = resources.orders.orders_for("u002")[0].merchant
+    script = [
+        _final(f"Your {merchant} order is being escalated to a specialist.", escalation="fraud"),
+        _final("I'm escalating this to a specialist who will review it.", escalation="fraud"),
+    ]
+    question = f"I didn't authorize this order from {merchant}."
+    result, llm = _run(resources, statics, script, question=question)
+    assert result.trace.tripwire["fraud_mode"] is True
+    assert llm.requests[0].tools == ()
+    assert result.trace.repair_attempted
+    assert merchant not in result.answer
+    assert result.route == "escalate"
+
+
 def test_tripwire_adds_note_but_model_writes_answer(resources, statics):
     text = "I'm sorry to hear that. A specialist on our team can discuss hardship options."
     result, llm = _run(resources, statics, [_final(text)], question="I lost my job.")

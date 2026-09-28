@@ -29,6 +29,9 @@ DEFAULT_TIMEOUT_S = 10.0
 # The Gemini API rejects request deadlines below 10 s (HTTP 400 INVALID_ARGUMENT).
 GEMINI_MIN_TIMEOUT_S = 10.0
 DEFAULT_MAX_ATTEMPTS = 2
+# One absolute wall-clock budget per case, shared by every semantic call and transport attempt
+# (architecture §7 "case deadline"); ≥ 2x the Gemini minimum so a timeout can be retried once.
+DEFAULT_CASE_DEADLINE_S = 30.0
 DEFAULT_MAX_OUTPUT_TOKENS = 600
 DEFAULT_INPUT_CHAR_CAP = 2000
 DEFAULT_MAX_LLM_CALLS_PER_BATCH = 2000
@@ -79,6 +82,7 @@ class Settings:
     thinking_level: str = DEFAULT_THINKING_LEVEL
     timeout_s: float = DEFAULT_TIMEOUT_S
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
+    case_deadline_s: float = DEFAULT_CASE_DEADLINE_S
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
     input_char_cap: int = DEFAULT_INPUT_CHAR_CAP
     max_llm_calls_per_batch: int = DEFAULT_MAX_LLM_CALLS_PER_BATCH
@@ -162,6 +166,13 @@ class Settings:
             )
             timeout_s = GEMINI_MIN_TIMEOUT_S
 
+        case_deadline_s = _positive_float(env, "CASE_DEADLINE_S", DEFAULT_CASE_DEADLINE_S)
+        if case_deadline_s < timeout_s:
+            warnings.append(
+                f"CASE_DEADLINE_S={case_deadline_s:g} is below LLM_TIMEOUT_S={timeout_s:g}; "
+                f"every attempt is capped by the case deadline"
+            )
+
         fake_script = _get(env, "FAKE_LLM_SCRIPT", "")
         data_dir = Path(_get(env, "DATA_DIR", DEFAULT_DATA_DIR))
         if not data_dir.is_absolute():
@@ -175,6 +186,7 @@ class Settings:
             thinking_level=thinking_level,
             timeout_s=timeout_s,
             max_attempts=_positive_int(env, "LLM_MAX_ATTEMPTS", DEFAULT_MAX_ATTEMPTS),
+            case_deadline_s=case_deadline_s,
             max_output_tokens=_positive_int(
                 env, "LLM_MAX_OUTPUT_TOKENS", DEFAULT_MAX_OUTPUT_TOKENS
             ),

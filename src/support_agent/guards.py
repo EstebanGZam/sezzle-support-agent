@@ -440,14 +440,27 @@ _DAY_MONTH_RE = re.compile(
 )
 _SLASH_DATE_RE = re.compile(r"(?<![\d/])(\d{1,2})/(\d{1,2})(?:/(\d{4}|\d{2}))?(?![\d/])")
 
-_ACTION_VERBS = (
-    r"(?:rescheduled|moved|waived|refunded|paused|cancell?ed|filed|opened|removed|increased|"
-    r"reactivated|credited)"
+# Verbs that only ever describe account actions here; claimed in the first person they fail.
+_ACTION_VERBS = r"(?:rescheduled|waived|refunded|paused|cancell?ed|filed|reactivated|credited)"
+# Verbs with harmless everyday uses ("I opened the policy page"); they fail only when their
+# direct object is one of the shopper's account items.
+_AMBIGUOUS_ACTION_VERBS = r"(?:moved|removed|opened|increased)"
+_ACCOUNT_NOUNS = (
+    r"(?:payments?|installments?|fees?|disputes?|due\s+dates?|charges?|orders?|limits?|spending\s+"
+    r"power|account|autopay|refunds?|case|claim|ticket|balance)"
 )
-_FIRST_PERSON_ACTION_RE = re.compile(
-    r"\b(?:i|we)(?:'ve|\s+have)?(?:\s+(?:already|just|now|successfully|also))?\s+"
-    + _ACTION_VERBS
-    + r"\b",
+_FIRST_PERSON = r"\b(?:i|we)(?:'ve|\s+have)?(?:\s+(?:already|just|now|successfully|also))?\s+"
+_FIRST_PERSON_ACTION_RE = re.compile(_FIRST_PERSON + _ACTION_VERBS + r"\b", re.IGNORECASE)
+_FIRST_PERSON_ACCOUNT_ACTION_RE = re.compile(
+    _FIRST_PERSON
+    + _AMBIGUOUS_ACTION_VERBS
+    # Up to three determiners/modifiers, never a preposition or conjunction ("the policy page to
+    # explain the dispute" has no account object), then an account noun that is not itself a
+    # modifier of a page ("your account settings").
+    + r"\s+(?:(?!(?:to|for|from|into|onto|in|on|at|with|and|or|so|because|about)\b)[\w$.'-]+\s+)"
+    r"{0,3}?"
+    + _ACCOUNT_NOUNS
+    + r"\b(?!\s+(?:page|screen|tab|settings|section|details|link|help|faq)\b)",
     re.IGNORECASE,
 )
 _AGENTLESS_ACTION_RE = re.compile(
@@ -483,7 +496,32 @@ _LIMIT_DISCLOSURE_RES = (
         re.IGNORECASE,
     ),
 )
-_HANDOFF_RE = re.compile(r"\b(?:human|specialist|agent|team|escalat\w*)", re.IGNORECASE)
+_HANDOFF_ROLE = r"(?:humans?|specialists?|agents?|teams?|representatives?|reps?|colleagues?|staff)"
+# Affirmative hand-off constructions (security §4 ``escalation_coherence``): a transfer verb aimed
+# at a person/team, an escalation verb, or a person/team as the subject of a helping action.
+_HANDOFF_RES = (
+    re.compile(
+        r"\b(?:connect|pass|refer|transfer|forward|hand|rout|send|escalat)\w*\s+(?:[\w'-]+\s+){0,4}?"
+        r"(?:over\s+)?(?:to|with)\s+(?:[\w'-]+\s+){0,4}?" + _HANDOFF_ROLE + r"\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bescalat(?:e|es|ed|ing)\b", re.IGNORECASE),
+    re.compile(
+        r"\b" + _HANDOFF_ROLE + r"\s+(?:[\w'-]+\s+){0,4}?(?:will|can|'ll|is\s+going\s+to|are\s+"
+        r"going\s+to|is\s+ready\s+to)\s+(?:(?:gladly|happily|now|then|soon|personally|also)\s+)?"
+        r"(?:review|help|assist|look|follow|contact|reach|get\s+back|investigate|handle|take|work|"
+        r"call|email|respond|reply|check|resolve|support|walk|discuss|guide|be\s+(?:in\s+touch|able"
+        r"\s+to|happy\s+to|glad\s+to|reaching|contacting|reviewing|looking|following|with\s+you))\b",
+        re.IGNORECASE,
+    ),
+)
+# A negation earlier in the same clause voids a hand-off match ("I will not escalate this",
+# "no specialist will review it"); "but"/"so"/"and" and punctuation start a new clause.
+_CLAUSE_BREAK_RE = re.compile(r"[.;:!?,\n—–()]|\s-\s|\b(?:but|so|and|however|instead|then)\b", re.I)
+_NEGATION_RE = re.compile(
+    r"\b(?:not|never|no|none|nobody|neither|nor|cannot|without|unable)\b|n't\b|n’t\b",
+    re.IGNORECASE,
+)
 _MONEY_KEYS = frozenset({"amount", "total", "unpaid_balance"})
 
 
@@ -565,7 +603,13 @@ class OutputValidator:
             "not_found"
         )
         foreign = [i for i in ids if i not in own]
-        echoed = [i for i in foreign if i in typed and tool_not_found]
+        # Exception (security §4): a shopper-typed ID the tool did not find may be echoed, but only
+        # inside a not-found statement; any claim of existence/ownership/status fails.
+        echoed = [
+            i
+            for i in foreign
+            if i in typed and tool_not_found and _only_not_found_mentions(text, i)
+        ]
         bad = [i for i in foreign if i not in echoed]
         if bad:
             return CheckVerdict("order_id", "fail", f"order IDs not on the caller's account {bad}")
@@ -614,7 +658,11 @@ class OutputValidator:
     # action_claim ------------------------------------------------------------------------
     @staticmethod
     def _check_action_claims(text: str, ctx: ValidationContext) -> CheckVerdict:
-        claims = [m.group(0) for m in _FIRST_PERSON_ACTION_RE.finditer(text)]
+        claims = [
+            m.group(0)
+            for pattern in (_FIRST_PERSON_ACTION_RE, _FIRST_PERSON_ACCOUNT_ACTION_RE)
+            for m in pattern.finditer(text)
+        ]
         recorded = _recorded_states(ctx.tool_result or {})
         for match in _AGENTLESS_ACTION_RE.finditer(text):
             verb = match.group("verb").lower()
@@ -641,7 +689,7 @@ def _check_limit_disclosure(text: str) -> CheckVerdict:
 
 def _check_escalation_coherence(final: FinalAnswer, ctx: ValidationContext) -> CheckVerdict:
     escalating = bool(ctx.forced_reason) or final.escalation_reason != "none"
-    if escalating and not _HANDOFF_RE.search(final.answer):
+    if escalating and not _has_handoff(final.answer):
         return CheckVerdict(
             "escalation_coherence", "fail", "escalating but the answer states no hand-off"
         )
@@ -756,8 +804,79 @@ def _recorded_states(tool_result: Mapping[str, Any]) -> frozenset[str]:
 
 
 def _fraud_merchants(text: str, ctx: ValidationContext) -> list[str]:
-    """Caller merchant names in the answer that the shopper did not type themselves."""
+    """Caller merchant names in the answer. SEC-11: none may appear in a fraud answer, even when the
+    shopper typed the name themselves."""
     answer = text.casefold()
-    typed = ctx.shopper_message.casefold()
     names = dict.fromkeys(o.merchant for o in ctx.caller_orders)
-    return [n for n in names if n.casefold() in answer and n.casefold() not in typed]
+    return [n for n in names if n.casefold() in answer]
+
+
+def _has_handoff(text: str) -> bool:
+    """Whether ``text`` states an affirmative, non-negated hand-off to a person or team."""
+    for pattern in _HANDOFF_RES:
+        for match in pattern.finditer(text):
+            clause = _CLAUSE_BREAK_RE.split(text[: match.start()])[-1]
+            if not _NEGATION_RE.search(clause):
+                return True
+    return False
+
+
+_NOT_FOUND_LEAD = (
+    r"(?:couldn't|could\s+not|can't|cannot|can\s+not|didn't|did\s+not|don't|do\s+not|wasn't\s+able"
+    r"\s+to|was\s+not\s+able\s+to|weren't\s+able\s+to|were\s+not\s+able\s+to|(?:am|'m|was|"
+    r"were|are|'re)\s+unable\s+to|unable\s+to)\s+(?:find|locate|see|match)"
+)
+_YOUR_ORDERS = r"(?:your|any\s+of\s+your)\s+(?:sezzle\s+)?(?:account|orders?|order\s+history)"
+# Statements that the ID exists, belongs to someone, or has a status void the exception.
+_OWNERSHIP_CLAIM_RE = re.compile(
+    r"\b(?:exists|belongs\s+to|belonging\s+to|registered\s+to|someone\s+else)\b|\b(?:another|a\s+"
+    r"different|other|someone\s+else's)\s+(?:shopper|account|customer|user|person|member|profile)s?"
+    r"\b",
+    re.IGNORECASE,
+)
+_STATUS_CLAIM_RE = re.compile(
+    r"\b(?:is|was|are|were|has\s+been|'s)\s+(?:currently\s+|still\s+|now\s+|already\s+)?(?:active|"
+    r"complete|completed|paid|overdue|late|pending|refunded|cancell?ed|disputed|open|closed|shipped|"
+    r"delivered|past\s+due|on\s+hold|paused|in\s+dispute)\b",
+    re.IGNORECASE,
+)
+_SENTENCE_RE = re.compile(r"[^.!?\n]*(?:[.!?]+|\n|$)")
+
+
+def _not_found_res(order_id: str) -> tuple[re.Pattern[str], ...]:
+    oid = re.escape(order_id)
+    return (
+        # "I couldn't find (an order with ID) ord_9999 (on your account)"
+        re.compile(rf"{_NOT_FOUND_LEAD}\s+(?:[\w#:'-]+\s+){{0,4}}?{oid}\b", re.IGNORECASE),
+        # "ord_9999 isn't on / doesn't appear on / doesn't match any of your orders"
+        re.compile(
+            rf"\b{oid}\s+(?:is\s+not|isn't|was\s+not|wasn't|does\s+not|doesn't|did\s+not|didn't)"
+            rf"\s+(?:(?:appear|show(?:\s+up)?|match|belong)\s+)?(?:on|in|under|among|to|with)?\s*"
+            rf"(?:any\s+(?:order\s+)?(?:on|in)\s+)?{_YOUR_ORDERS}\b",
+            re.IGNORECASE,
+        ),
+        # "there is no order ord_9999 on your account" / "no match for ord_9999"
+        re.compile(
+            rf"\bno\s+(?:orders?|records?|match(?:es)?|results?)\s+(?:[\w#:'-]+\s+){{0,4}}?{oid}\b",
+            re.IGNORECASE,
+        ),
+    )
+
+
+def _only_not_found_mentions(text: str, order_id: str) -> bool:
+    """Every mention of ``order_id`` sits in a sentence with a not-found construction around it
+    and no status claim, and the answer nowhere claims existence or ownership."""
+    if _OWNERSHIP_CLAIM_RE.search(text):
+        return False
+    patterns = _not_found_res(order_id)
+    id_re = re.compile(rf"\b{re.escape(order_id)}\b", re.IGNORECASE)
+    for sentence in (m.group(0) for m in _SENTENCE_RE.finditer(text)):
+        if not id_re.search(sentence):
+            continue
+        if _STATUS_CLAIM_RE.search(sentence):
+            return False
+        covered = [(m.start(), m.end()) for p in patterns for m in p.finditer(sentence)]
+        for mention in id_re.finditer(sentence):
+            if not any(start <= mention.start() < end for start, end in covered):
+                return False
+    return True

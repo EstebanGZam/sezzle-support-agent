@@ -29,6 +29,7 @@ def test_defaults_match_architecture():
     assert s.thinking_level == "minimal"
     assert s.timeout_s == 10.0
     assert s.max_attempts == 2
+    assert s.case_deadline_s == 30.0
     assert s.max_output_tokens == 600
     assert s.input_char_cap == 2000
     assert s.max_llm_calls_per_batch == 2000
@@ -74,8 +75,10 @@ def test_numeric_overrides():
             INPUT_CHAR_CAP="1000",
             MAX_LLM_CALLS_PER_BATCH="10",
             GEMINI_THINKING_LEVEL="LOW",
+            CASE_DEADLINE_S="45",
         )
     )
+    assert s.case_deadline_s == 45.0
     assert (s.timeout_s, s.max_attempts, s.max_output_tokens) == (12.5, 3, 800)
     assert (s.input_char_cap, s.max_llm_calls_per_batch, s.thinking_level) == (1000, 10, "low")
 
@@ -91,6 +94,9 @@ def test_numeric_overrides():
         ("LLM_MAX_OUTPUT_TOKENS", "-1"),
         ("INPUT_CHAR_CAP", "x"),
         ("MAX_LLM_CALLS_PER_BATCH", "0"),
+        ("CASE_DEADLINE_S", "0"),
+        ("CASE_DEADLINE_S", "inf"),
+        ("CASE_DEADLINE_S", "soon"),
         ("GEMINI_THINKING_LEVEL", "extreme"),
         ("LLM_PROVIDER", "openai"),
     ],
@@ -112,6 +118,16 @@ def test_gemini_timeout_at_or_above_minimum_is_kept_without_warning():
     assert Settings.from_env(gemini_env(LLM_TIMEOUT_S="10")).timeout_s == 10.0
     s = Settings.from_env(gemini_env(LLM_TIMEOUT_S="15"))
     assert (s.timeout_s, s.warnings) == (15.0, ())
+
+
+def test_default_case_deadline_allows_a_retry_at_the_gemini_minimum():
+    assert Settings.from_env(gemini_env()).case_deadline_s >= 2 * GEMINI_MIN_TIMEOUT_S
+
+
+def test_case_deadline_below_timeout_warns():
+    s = Settings.from_env(gemini_env(CASE_DEADLINE_S="5"))
+    assert s.case_deadline_s == 5.0
+    assert len(s.warnings) == 1 and "CASE_DEADLINE_S" in s.warnings[0]
 
 
 def test_fake_provider_timeout_is_not_clamped():

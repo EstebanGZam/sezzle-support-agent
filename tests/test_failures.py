@@ -191,6 +191,96 @@ def test_batch_limit_for_remaining_cases(resources, statics):
         _assert_safe_failure(r, "batch_limit")
 
 
+# --- per-case deadline (architecture §7, R-01 #4) -------------------------------------------
+
+
+class _Clock:
+    """Fake monotonic clock shared by ``answer_case`` and the LLM's ``AttemptRunner``."""
+
+    def __init__(self, now=100.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+class _TimedFakeLLM(FakeLLM):
+    """FakeLLM whose attempts take simulated time: step ``i`` lasts ``durations[i]`` seconds, cut
+    off at the attempt's timeout (as a real client timeout would)."""
+
+    def __init__(self, script, durations, clock, **kwargs):
+        super().__init__(script, clock=clock, sleep=clock.advance, **kwargs)
+        self.clock = clock
+        self.durations = list(durations)
+        self.attempt_timeouts = []
+
+    def _attempt(self, model, timeout_s):
+        self.attempt_timeouts.append(timeout_s)
+        self.clock.advance(min(self.durations.pop(0), timeout_s))
+        return super()._attempt(model, timeout_s)
+
+
+def _timed(resources, statics, script, durations, *, budget=None, timeout_s=12.0):
+    clock = _Clock()
+    start = clock.now
+    llm = _TimedFakeLLM(script, durations, clock, max_attempts=MAX_ATTEMPTS, timeout_s=timeout_s)
+    case = Case(id="d1", user_id="u002", question="When is my next payment?")
+    result = answer_case(resources, llm, case, statics=statics, budget=budget, clock=clock)
+    return result, llm, start
+
+
+def test_every_call_carries_the_same_absolute_case_deadline(resources, statics):
+    script = [{"function_call": {"name": "get_my_orders", "args": {}}}, _final()]
+    result, llm, start = _timed(resources, statics, script, [3.0, 3.0])
+    assert result.error_class is None
+    deadline = start + resources.settings.case_deadline_s
+    assert [r.deadline for r in llm.requests] == [deadline, deadline]
+
+
+def test_retry_attempt_timeout_is_capped_by_the_case_deadline(resources, statics):
+    # Call 1 takes 10 s; call 2 times out after its full 12 s and is retried with the 8 s left.
+    script = [
+        {"function_call": {"name": "get_my_orders", "args": {}}},
+        _err("timeout"),
+        _err("timeout"),
+    ]
+    result, llm, start = _timed(resources, statics, script, [10.0, 60.0, 60.0])
+    _assert_safe_failure(result, "timeout")
+    assert llm.attempt_timeouts == [12.0, 12.0, pytest.approx(8.0)]
+    assert llm.clock.now - start <= resources.settings.case_deadline_s
+    _assert_budgets(result)
+
+
+def test_exhausted_deadline_stops_the_same_model_retry(resources, statics):
+    # Without a deadline this timeout is retried and recovers (see the retryable tests above).
+    deadline_s = resources.settings.case_deadline_s
+    result, llm, _ = _timed(
+        resources, statics, [_err("timeout"), _final()], [deadline_s - 0.2], timeout_s=deadline_s
+    )
+    _assert_safe_failure(result, "timeout")
+    assert llm.attempt_models == ["fake-primary"]
+    assert [a["status"] for a in result.trace.llm_calls[0].attempts] == ["failed"]
+    assert llm.remaining_steps == 1
+
+
+def test_exhausted_deadline_stops_later_calls_without_spending_budget(resources, statics):
+    # Call 1 answers invalidly just before the deadline: no repair call is made.
+    deadline_s = resources.settings.case_deadline_s
+    script = [_final("Your limit is $500."), _final()]
+    budget = CallBudget(10)
+    result, llm, _ = _timed(
+        resources, statics, script, [deadline_s - 0.2], budget=budget, timeout_s=deadline_s
+    )
+    _assert_safe_failure(result, "timeout")
+    assert result.trace.repair_attempted
+    assert len(llm.requests) == 1 and len(result.trace.llm_calls) == 1
+    assert llm.remaining_steps == 1
+    assert budget.used == 1
+
+
 # --- batch level through the CLI -----------------------------------------------------------
 
 

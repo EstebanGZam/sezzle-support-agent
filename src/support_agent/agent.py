@@ -4,6 +4,8 @@ Steps: input guard → tripwire (fraud mode withholds the tool) → request buil
 ``auto``) → execute **only** the first registered tool call, record the others → call #2 (tool
 mode ``none``) → validate → at most one repair call (tool mode ``none``) → else the SEC-10 safe
 failure. The route is derived by code (§6) and a ``TraceRecord`` is returned with the result.
+Every call carries one absolute per-case deadline (``CASE_DEADLINE_S`` from the start of the case),
+so retries and later calls stop once it is used up (``error_class == "timeout"``).
 
 The model writes every substantive answer (ADR-1, SEZ-F01): the only text code ever returns is
 ``SAFE_FAILURE_ANSWER``. ``answer_case`` is a pure function of (resources, llm, case) plus the
@@ -31,6 +33,7 @@ from support_agent.guards import (
     ValidationResult,
 )
 from support_agent.llm.base import (
+    MIN_ATTEMPT_BUDGET_S,
     FinalAnswer,
     LLMClient,
     LLMRequest,
@@ -153,7 +156,8 @@ def answer_case(
 ) -> CaseResult:
     """Answer one case. Provider errors and batch-limit exhaustion become the SEC-10 line with the
     error class in the trace; an ``AuthBillingError`` yields ``error_class == "auth_billing"``,
-    which the caller turns into the batch circuit breaker."""
+    which the caller turns into the batch circuit breaker. ``clock`` must be the clock of ``llm``
+    (both default to ``time.monotonic``): the case deadline is an absolute value on it."""
     run = _CaseRun(
         resources=resources,
         llm=llm,
@@ -233,6 +237,7 @@ class _CaseRun:
         self.run_id = run_id
         self.clock = clock
         self.started = clock()
+        self.deadline = self.started + resources.settings.case_deadline_s
 
         self.calls: list[LLMCallRecord] = []
         self.tool_calls: list[ToolCallRecord] = []
@@ -337,6 +342,9 @@ class _CaseRun:
     ) -> LLMResponse:
         if len(self.calls) >= MAX_SEMANTIC_CALLS_PER_CASE:  # defensive; the loop never exceeds it
             raise _ValidationExhausted
+        if self.deadline - self.clock() < MIN_ATTEMPT_BUDGET_S:
+            # No time for even one attempt: stop before spending batch budget on the call.
+            raise ProviderError("timeout", f"case deadline exhausted before the {purpose} call")
         if self.budget is not None:
             self.budget.take()
         request = LLMRequest(
@@ -346,6 +354,7 @@ class _CaseRun:
             tool_mode=tool_mode,
             response_schema=FinalAnswer,
             max_output_tokens=self.resources.settings.max_output_tokens,
+            deadline=self.deadline,
         )
         try:
             response = self.llm.generate(request)
