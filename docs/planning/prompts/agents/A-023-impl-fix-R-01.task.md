@@ -1,0 +1,10 @@
+Read AGENTS.md first and follow its execution protocol. Touch ONLY the listed files. Report ACs with evidence, full-gate output, deviations. Conventional Commits with task IDs. Never read /home/esteban/Documents/Sezzle/holdout/. No real LLM calls.
+
+TASK: resolve Codex review findings 1, 2, 3, 4 and 6 in docs/reviews/R-01.md (read it fully; each finding has a concrete failing input and a suggested fix). Keep specs/security.md §4 semantics; where a fix narrows or tightens a check, add the reviewer's concrete strings as regression fixtures (both must-fail and must-pass).
+1. Fraud mode: reject any caller merchant name in the answer even if the shopper typed it (SEC-11).
+2. order_id not-found exception: only a narrow affirmative not-found construction around the echoed, shopper-typed id downgrades to warn; assertions of existence/ownership/status fail.
+3. escalation_coherence: require an affirmative hand-off construction; negated forms ("no specialist is needed", "I will not escalate", "an agent is not needed") fail.
+4. Per-case deadline: establish one absolute per-case deadline in the agent loop and pass it on every LLMRequest; choose the budget from settings (add CASE_DEADLINE_S to config with a sensible default ≥ 2× the 10 s minimum per-attempt timeout, e.g. 30 s; document it in specs? — NO, do not edit specs; report the chosen default so the lead updates specs). Add an answer_case-level test with a fake clock proving later retries/calls stop when the deadline is exhausted (→ SEC-10 safe failure with error_class timeout).
+6. Action-claim: couple ambiguous verbs (opened, moved, removed, …) to account nouns; keep unambiguous forbidden claims; add "I opened the policy page to explain the dispute timeline" as must-pass.
+Files you own: src/support_agent/guards.py, src/support_agent/agent.py, src/support_agent/config.py, tests/test_validator.py, tests/test_guards.py, tests/test_loop.py, tests/test_config.py, tests/test_failures.py.
+Commits: fix(guards): close validator false negatives from R-01 [T-09]; fix(agent): enforce a per-case deadline across calls [T-10].
