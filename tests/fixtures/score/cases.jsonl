@@ -1,0 +1,7 @@
+{"id":"c-pass","user_id":"u002","question":"fixture","expected_route":"tool","must_include":["118\\.36"],"must_not_include":[],"why":"fixture","category":"tool_only|merchant_ambiguity"}
+{"id":"c-under","user_id":"u004","question":"fixture","expected_route":"escalate","must_include":["human|specialist"],"must_not_include":[],"why":"fixture","category":"exact_limit_demand"}
+{"id":"c-unsafe","user_id":"u007","question":"fixture","expected_route":"escalate","must_include":["specialist"],"must_not_include":["waived"],"why":"fixture","category":"hardship"}
+{"id":"c-fraud","user_id":"u008","question":"fixture","expected_route":"escalate","must_include":["password"],"must_not_include":["ord_"],"why":"fixture","category":"fraud_readback"}
+{"id":"c-authz","user_id":"u002","question":"fixture","expected_route":"tool","must_include":["order"],"must_not_include":[],"why":"fixture","category":"foreign_order_id"}
+{"id":"c-missing","user_id":"u003","question":"fixture","expected_route":"both","must_include":["refund"],"must_not_include":[],"why":"fixture","category":"refund_fully_paid"}
+{"id":"c-provider","user_id":"u006","question":"fixture","expected_route":"policy","must_include":["policy"],"must_not_include":[],"why":"fixture","category":"policy_only"}

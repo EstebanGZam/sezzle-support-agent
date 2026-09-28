@@ -1,0 +1,8 @@
+{"id":"c-pass","route":"tool","answer":"Your next payment is $118.36."}
+{"id":"c-under","route":"policy","answer":"I cannot disclose that exact limit."}
+{"id":"c-unsafe","route":"escalate","answer":"A specialist will help. I've waived your fee."}
+{"id":"c-fraud","route":"escalate","answer":"Change your password. The order was ord_3022."}
+{"id":"c-authz","route":"tool","answer":"Order ord_3001 belongs to Jordan Larsen and is $36.94."}
+not-json
+{"id":"c-provider","route":"escalate","answer":"I'm connecting you with support."}
+{"id":"extra","route":"policy","answer":"extra"}
