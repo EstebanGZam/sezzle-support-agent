@@ -1,0 +1,604 @@
+"""Gemini adapter: §7 error table, retry/fallback, config and normalization (no network).
+
+The SDK client is replaced by a stub whose ``generate_content`` returns canned
+``GenerateContentResponse`` objects or raises stubbed ``google.genai.errors`` / ``httpx``
+exceptions, so every row of the architecture §7 table runs through the real ``GeminiClient``.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+import httpx
+import pytest
+from google.genai import errors, types
+
+from support_agent.config import Secret, Settings
+from support_agent.llm import (
+    AuthBillingError,
+    FinalAnswer,
+    LLMRequest,
+    ModelTurn,
+    ProviderError,
+    ToolResult,
+    UserMessage,
+)
+from support_agent.llm.base import MAX_BACKOFF_S
+from support_agent.llm.gemini import (
+    GEMINI_BASE_URL,
+    GeminiClient,
+    classify_exception,
+    to_contents,
+    to_usage,
+)
+from support_agent.tools import GET_MY_ORDERS_DECLARATION
+
+PRIMARY = "gemini-3.5-flash-lite"
+FALLBACK = "gemini-3.1-flash-lite"
+KEY = "test-key-0123456789"
+FINAL = {
+    "answer": "Synthetic reply.",
+    "escalation_reason": "none",
+    "policy_applied": False,
+    "cited_policies": [],
+}
+
+
+# --- stubs ------------------------------------------------------------------------------------
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.t = 1000.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+class StubModels:
+    def __init__(self, outcomes: list[Any], clock: Clock | None = None) -> None:
+        self.outcomes = list(outcomes)
+        self.calls: list[dict[str, Any]] = []
+        self.clock = clock
+
+    def generate_content(self, *, model: str, contents: Any, config: Any) -> Any:
+        self.calls.append({"model": model, "contents": contents, "config": config})
+        outcome = self.outcomes.pop(0)
+        if callable(outcome) and not isinstance(outcome, BaseException):
+            outcome = outcome(self.clock)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    @property
+    def models_called(self) -> list[str]:
+        return [c["model"] for c in self.calls]
+
+
+class StubSDK:
+    def __init__(self, outcomes: list[Any], clock: Clock | None = None) -> None:
+        self.models = StubModels(outcomes, clock)
+
+
+def settings(**overrides: Any) -> Settings:
+    base: dict[str, Any] = {
+        "provider": "gemini",
+        "primary_model": PRIMARY,
+        "fallback_model": FALLBACK,
+        "api_key": Secret(KEY),
+        "max_attempts": 2,
+        "timeout_s": 8.0,
+    }
+    base.update(overrides)
+    return Settings(**base)
+
+
+def make_client(outcomes: list[Any], **overrides: Any) -> tuple[GeminiClient, StubSDK, list]:
+    clock = Clock()
+    sdk = StubSDK(outcomes, clock)
+    sleeps: list[float] = []
+    client = GeminiClient(settings(**overrides), client=sdk, sleep=sleeps.append, clock=clock)
+    return client, sdk, sleeps
+
+
+def request(**overrides: Any) -> LLMRequest:
+    base: dict[str, Any] = {
+        "system": "You are a support assistant for a fictional demo store.",
+        "contents": (UserMessage("When is my next payment?"),),
+        "tools": (GET_MY_ORDERS_DECLARATION,),
+        "tool_mode": "auto",
+    }
+    base.update(overrides)
+    return LLMRequest(**base)
+
+
+def ok_response(
+    parts: list[types.Part] | None = None,
+    *,
+    finish: types.FinishReason = types.FinishReason.STOP,
+    usage: types.GenerateContentResponseUsageMetadata | None = None,
+) -> types.GenerateContentResponse:
+    parts = parts if parts is not None else [types.Part(text=json.dumps(FINAL))]
+    return types.GenerateContentResponse(
+        candidates=[
+            types.Candidate(content=types.Content(role="model", parts=parts), finish_reason=finish)
+        ],
+        usage_metadata=usage,
+    )
+
+
+def api_error(
+    code: int, status: str, message: str = "", details: list | None = None
+) -> errors.APIError:
+    body = {"error": {"code": code, "status": status, "message": message, "details": details or []}}
+    cls = errors.ServerError if code >= 500 else errors.ClientError
+    return cls(code, body)
+
+
+def quota_failure(quota_id: str, value: str = "15") -> list[dict]:
+    return [
+        {
+            "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+            "violations": [
+                {
+                    "quotaMetric": "generativelanguage.googleapis.com/generate_content_requests",
+                    "quotaId": quota_id,
+                    "quotaValue": value,
+                }
+            ],
+        },
+        {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "37s"},
+    ]
+
+
+QUOTA_MSG = "You exceeded your current quota, please check your plan and billing details."
+RATE_MINUTE = api_error(
+    429, "RESOURCE_EXHAUSTED", QUOTA_MSG, quota_failure("GenerateRequestsPerMinutePerProject")
+)
+QUOTA_DAY = api_error(
+    429, "RESOURCE_EXHAUSTED", QUOTA_MSG, quota_failure("GenerateRequestsPerDayPerProjectPerModel")
+)
+SERVER_503 = api_error(503, "UNAVAILABLE", "The model is overloaded.")
+NOT_FOUND = api_error(404, "NOT_FOUND", "models/x is not found for API version v1beta")
+BAD_REQUEST = api_error(400, "INVALID_ARGUMENT", "Invalid JSON payload received.")
+BAD_KEY = api_error(
+    400,
+    "INVALID_ARGUMENT",
+    "API key not valid. Please pass a valid API key.",
+    [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "API_KEY_INVALID"}],
+)
+READ_TIMEOUT = httpx.ReadTimeout("timed out")
+
+
+# --- §7 table: classification ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        (RATE_MINUTE, "rate_limit_minute"),
+        (api_error(429, "RESOURCE_EXHAUSTED", "Resource has been exhausted"), "rate_limit_minute"),
+        (api_error(429, "RESOURCE_EXHAUSTED", QUOTA_MSG), "rate_limit_minute"),
+        (QUOTA_DAY, "quota_daily"),
+        (api_error(429, "RESOURCE_EXHAUSTED", "Quota exceeded: requests per day"), "quota_daily"),
+        (api_error(429, "RESOURCE_EXHAUSTED", "Daily limit reached"), "quota_daily"),
+        (
+            api_error(
+                429,
+                "RESOURCE_EXHAUSTED",
+                QUOTA_MSG,
+                quota_failure("GenerateRequestsPerMinute", "0"),
+            ),
+            "quota_daily",
+        ),
+        (api_error(500, "INTERNAL", "Internal error"), "server_5xx"),
+        (api_error(502, "", "Bad gateway"), "server_5xx"),
+        (SERVER_503, "server_5xx"),
+        (api_error(504, "DEADLINE_EXCEEDED", "Deadline exceeded"), "server_5xx"),
+        (READ_TIMEOUT, "timeout"),
+        (httpx.ConnectTimeout("connect timed out"), "timeout"),
+        (TimeoutError("timed out"), "timeout"),
+        (api_error(408, "", "Request timeout"), "timeout"),
+        (httpx.ConnectError("connection refused"), "server_5xx"),
+        (NOT_FOUND, "model_not_found"),
+        (BAD_REQUEST, "bad_request"),
+        (api_error(400, "INVALID_ARGUMENT", "response_schema: invalid enum"), "bad_request"),
+        (api_error(413, "", "Payload too large"), "bad_request"),
+        (BAD_KEY, "auth_billing"),
+        (api_error(401, "UNAUTHENTICATED", "Request had invalid credentials"), "auth_billing"),
+        (api_error(403, "PERMISSION_DENIED", "Permission denied"), "auth_billing"),
+        (api_error(403, "PERMISSION_DENIED", "Billing account disabled"), "auth_billing"),
+        (api_error(400, "FAILED_PRECONDITION", "User location is not supported"), "auth_billing"),
+        (api_error(400, "INVALID_ARGUMENT", "API key expired. Please renew."), "auth_billing"),
+    ],
+    ids=lambda v: v if isinstance(v, str) else None,
+)
+def test_classify_exception(exc: BaseException, expected: str) -> None:
+    err = classify_exception(exc, model=PRIMARY)
+    assert err is not None
+    assert err.kind == expected
+    assert err.model == PRIMARY
+    assert isinstance(err, AuthBillingError) == (expected == "auth_billing")
+
+
+def test_unrelated_exceptions_are_not_classified() -> None:
+    assert classify_exception(ValueError("bug"), model=PRIMARY) is None
+    assert classify_exception(KeyError("x"), model=PRIMARY) is None
+
+
+def test_error_message_never_contains_the_key() -> None:
+    exc = api_error(400, "INVALID_ARGUMENT", f"API key not valid: {KEY}")
+    err = classify_exception(exc, model=PRIMARY, secret=KEY)
+    assert err is not None
+    assert KEY not in str(err)
+    assert "[REDACTED]" in err.message
+
+
+# --- §7 table: retry / fallback behaviour through GeminiClient -------------------------------
+
+# (outcome of the first attempt, error_class, same-model retry?, fallback-eligible?)
+TABLE = [
+    (RATE_MINUTE, "rate_limit_minute", True, True),
+    (QUOTA_DAY, "quota_daily", False, True),
+    (SERVER_503, "server_5xx", True, True),
+    (READ_TIMEOUT, "timeout", True, True),
+    (NOT_FOUND, "model_not_found", False, True),
+    (BAD_REQUEST, "bad_request", False, False),
+    (BAD_KEY, "auth_billing", False, False),
+]
+
+
+@pytest.mark.parametrize(("first", "kind", "retry", "fallback"), TABLE, ids=[r[1] for r in TABLE])
+def test_first_failure_then_success(first: Any, kind: str, retry: bool, fallback: bool) -> None:
+    client, sdk, _ = make_client([first, ok_response()])
+    if not retry and not fallback:
+        with pytest.raises(ProviderError) as info:
+            client.generate(request())
+        assert info.value.kind == kind
+        assert sdk.models.models_called == [PRIMARY]  # never retried, never failed over
+        assert [a.to_dict() for a in info.value.attempts] == [
+            {"model": PRIMARY, "status": "failed", "error_class": kind, "latency_ms": 0}
+        ]
+        return
+
+    resp = client.generate(request())
+    assert resp.final_json == FINAL
+    expected_second = PRIMARY if retry else FALLBACK
+    assert sdk.models.models_called == [PRIMARY, expected_second]
+    assert [(a.model, a.status, a.error_class) for a in resp.attempts] == [
+        (PRIMARY, "retry" if retry else "fallback", kind),
+        (expected_second, "ok", None),
+    ]
+    assert resp.model_id == expected_second
+    assert resp.fallback_used is (not retry)
+
+
+@pytest.mark.parametrize(("first", "kind", "retry", "fallback"), TABLE, ids=[r[1] for r in TABLE])
+def test_without_fallback_model(first: Any, kind: str, retry: bool, fallback: bool) -> None:
+    client, sdk, _ = make_client([first, ok_response()], fallback_model=None)
+    if retry:
+        assert client.generate(request()).model_id == PRIMARY
+        assert sdk.models.models_called == [PRIMARY, PRIMARY]
+    else:
+        with pytest.raises(ProviderError) as info:
+            client.generate(request())
+        assert info.value.kind == kind
+        assert sdk.models.models_called == [PRIMARY]
+
+
+@pytest.mark.parametrize("exc", [RATE_MINUTE, SERVER_503, READ_TIMEOUT], ids=str)
+def test_same_model_retry_is_once_and_attempts_are_capped(exc: Any) -> None:
+    # Default budget 2: first attempt + one same-model retry; the fallback is never reached.
+    client, sdk, _ = make_client([exc, exc, ok_response()])
+    with pytest.raises(ProviderError) as info:
+        client.generate(request())
+    assert sdk.models.models_called == [PRIMARY, PRIMARY]
+    assert [a.status for a in info.value.attempts] == ["retry", "failed"]
+
+
+def test_larger_budget_retries_once_then_falls_back() -> None:
+    client, sdk, _ = make_client([SERVER_503, SERVER_503, ok_response()], max_attempts=4)
+    resp = client.generate(request())
+    assert sdk.models.models_called == [PRIMARY, PRIMARY, FALLBACK]
+    assert [a.status for a in resp.attempts] == ["retry", "fallback", "ok"]
+    assert resp.fallback_used
+
+
+def test_attempt_budget_is_per_semantic_call() -> None:
+    # Each generate() is one semantic call with its own transport-attempt budget.
+    client, sdk, _ = make_client([SERVER_503, ok_response(), SERVER_503, ok_response()])
+    first = client.generate(request())
+    second = client.generate(request(tool_mode="none"))
+    assert len(first.attempts) == 2 and len(second.attempts) == 2
+    assert len(sdk.models.calls) == 4
+
+
+def test_backoff_is_short_and_jittered_only_for_rate_limit_and_5xx() -> None:
+    client, _, sleeps = make_client([RATE_MINUTE, ok_response()])
+    client.generate(request())
+    assert len(sleeps) == 1 and 0 < sleeps[0] <= MAX_BACKOFF_S
+
+    client, _, sleeps = make_client([READ_TIMEOUT, ok_response()])
+    client.generate(request())
+    assert sleeps == []
+
+
+def test_quota_daily_disables_the_model_for_the_rest_of_the_batch() -> None:
+    client, sdk, _ = make_client([QUOTA_DAY, ok_response(), ok_response()])
+    client.generate(request())
+    later = client.generate(request())
+    assert sdk.models.models_called == [PRIMARY, FALLBACK, FALLBACK]
+    assert later.model_id == FALLBACK and later.fallback_used
+
+
+def test_quota_daily_on_every_model_fails_fast() -> None:
+    client, sdk, _ = make_client([QUOTA_DAY, QUOTA_DAY])
+    with pytest.raises(ProviderError) as info:
+        client.generate(request())
+    assert info.value.kind == "quota_daily"
+    with pytest.raises(ProviderError) as again:
+        client.generate(request())
+    assert again.value.kind == "quota_daily"
+    assert again.value.attempts == ()
+    assert sdk.models.models_called == [PRIMARY, FALLBACK]
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        BAD_KEY,
+        api_error(401, "UNAUTHENTICATED", "invalid credentials"),
+        api_error(403, "PERMISSION_DENIED", "billing disabled"),
+        api_error(400, "FAILED_PRECONDITION", "precondition"),
+    ],
+    ids=["400-key", "401", "403", "failed-precondition"],
+)
+def test_auth_billing_is_never_retried_and_latches(exc: Any) -> None:
+    client, sdk, sleeps = make_client([exc, ok_response(), ok_response()], max_attempts=5)
+    with pytest.raises(AuthBillingError):
+        client.generate(request())
+    with pytest.raises(AuthBillingError) as again:
+        client.generate(request())
+    assert again.value.attempts == ()
+    assert sdk.models.models_called == [PRIMARY]  # one transport attempt in total
+    assert sleeps == []
+
+
+@pytest.mark.parametrize(
+    "finish", [types.FinishReason.SAFETY, types.FinishReason.PROHIBITED_CONTENT]
+)
+def test_blocked_safety_is_not_retried(finish: types.FinishReason) -> None:
+    client, sdk, _ = make_client([ok_response([], finish=finish), ok_response()])
+    with pytest.raises(ProviderError) as info:
+        client.generate(request())
+    assert info.value.kind == "blocked_safety"
+    assert sdk.models.models_called == [PRIMARY]
+
+
+def test_blocked_prompt_is_blocked_safety() -> None:
+    blocked = types.GenerateContentResponse(
+        prompt_feedback=types.GenerateContentResponsePromptFeedback(
+            block_reason=types.BlockedReason.SAFETY
+        )
+    )
+    client, sdk, _ = make_client([blocked, ok_response()])
+    with pytest.raises(ProviderError) as info:
+        client.generate(request())
+    assert info.value.kind == "blocked_safety"
+    assert len(sdk.models.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "resp",
+    [
+        ok_response([types.Part(text="not json at all")]),
+        ok_response([types.Part(text='["a list", "not an object"]')]),
+        ok_response([], finish=types.FinishReason.MALFORMED_FUNCTION_CALL),
+        ok_response([types.Part(text='{"answer": "trunc')], finish=types.FinishReason.MAX_TOKENS),
+        types.GenerateContentResponse(candidates=[]),
+    ],
+    ids=["text", "json-list", "malformed-call", "truncated", "no-candidates"],
+)
+def test_malformed_output_is_returned_for_repair_not_retried(resp: Any) -> None:
+    client, sdk, _ = make_client([resp, ok_response()])
+    out = client.generate(request())
+    assert out.malformed
+    assert out.final_json is None and out.function_calls == ()
+    assert len(sdk.models.calls) == 1
+    assert [a.status for a in out.attempts] == ["ok"]
+
+
+def test_unclassified_exception_propagates() -> None:
+    client, _, _ = make_client([RuntimeError("programming error")])
+    with pytest.raises(RuntimeError):
+        client.generate(request())
+
+
+# --- timeouts and the case deadline -----------------------------------------------------------
+
+
+def _timing_out(seconds: float):
+    def outcome(clock: Clock) -> BaseException:
+        clock.t += seconds
+        return httpx.ReadTimeout("timed out")
+
+    return outcome
+
+
+def test_timeout_retry_when_deadline_allows_uses_remaining_time() -> None:
+    client, sdk, _ = make_client([_timing_out(8.0), ok_response()])
+    deadline = 1000.0 + 10.0
+    resp = client.generate(request(deadline=deadline))
+    assert [a.status for a in resp.attempts] == ["retry", "ok"]
+    assert resp.attempts[0].latency_ms == 8000
+    timeouts = [c["config"].http_options.timeout for c in sdk.models.calls]
+    assert timeouts == [8000, 2000]  # second attempt capped by the remaining case time
+
+
+def test_timeout_not_retried_when_deadline_does_not_allow() -> None:
+    client, sdk, _ = make_client([_timing_out(8.0), ok_response()])
+    with pytest.raises(ProviderError) as info:
+        client.generate(request(deadline=1000.0 + 8.2))
+    assert info.value.kind == "timeout"
+    assert [a.status for a in info.value.attempts] == ["failed"]
+    assert len(sdk.models.calls) == 1
+
+
+def test_expired_deadline_makes_no_attempt() -> None:
+    client, sdk, _ = make_client([ok_response()])
+    with pytest.raises(ProviderError) as info:
+        client.generate(request(deadline=1000.0))
+    assert info.value.kind == "timeout"
+    assert sdk.models.calls == []
+
+
+# --- request configuration -------------------------------------------------------------------
+
+
+def test_config_auto_mode_with_tools_schema_and_thinking() -> None:
+    client, sdk, _ = make_client([ok_response()], thinking_level="minimal", max_output_tokens=600)
+    client.generate(request())
+    config: types.GenerateContentConfig = sdk.models.calls[0]["config"]
+    assert config.automatic_function_calling.disable is True
+    assert config.http_options.retry_options.attempts == 1
+    assert config.http_options.timeout == 8000
+    assert config.tool_config.function_calling_config.mode == types.FunctionCallingConfigMode.AUTO
+    assert config.thinking_config.thinking_level == types.ThinkingLevel.MINIMAL
+    assert config.max_output_tokens == 600
+    assert config.candidate_count == 1
+    assert config.system_instruction == request().system
+    assert config.response_mime_type == "application/json"
+
+    decl = config.tools[0].function_declarations[0]
+    assert decl.name == "get_my_orders"
+    assert "user_id" not in (decl.parameters.properties or {})
+    assert decl.parameters.properties["order_id"].pattern == r"^ord_\d{1,6}$"
+
+    schema = config.response_schema
+    assert schema.required == ["answer", "escalation_reason", "policy_applied", "cited_policies"]
+    assert schema.property_ordering == schema.required
+    assert "none" in schema.properties["escalation_reason"].enum
+    assert schema.properties["answer"].max_length == 1200
+
+
+def test_config_none_mode_and_no_tools() -> None:
+    client, sdk, _ = make_client([ok_response(), ok_response()])
+    client.generate(request(tool_mode="none", max_output_tokens=123))
+    config = sdk.models.calls[0]["config"]
+    assert config.tool_config.function_calling_config.mode == types.FunctionCallingConfigMode.NONE
+    assert config.tools  # declarations stay present so the replayed tool turn stays valid
+    assert config.max_output_tokens == 123
+
+    client.generate(request(tools=()))
+    bare = sdk.models.calls[1]["config"]
+    assert bare.tools is None and bare.tool_config is None
+
+
+def test_config_thinking_level_follows_settings() -> None:
+    client, sdk, _ = make_client([ok_response()], thinking_level="low")
+    client.generate(request())
+    assert sdk.models.calls[0]["config"].thinking_config.thinking_level == types.ThinkingLevel.LOW
+
+
+def test_fallback_uses_same_sdk_client_and_only_changes_the_model() -> None:
+    client, sdk, _ = make_client([NOT_FOUND, ok_response()])
+    client.generate(request())
+    first, second = sdk.models.calls
+    assert (first["model"], second["model"]) == (PRIMARY, FALLBACK)
+    assert first["contents"] is second["contents"]
+    assert first["config"].model_dump() == second["config"].model_dump()
+
+
+def test_real_sdk_client_uses_only_the_settings_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "inherited-gemini-key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "inherited-google-key")
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+    monkeypatch.setenv("GOOGLE_GEMINI_BASE_URL", "https://example.invalid/")
+    client = GeminiClient(settings())  # constructs the SDK client; makes no request
+    api = client._client._api_client
+    assert api.api_key == KEY
+    assert api.vertexai is False
+    assert api._http_options.base_url == GEMINI_BASE_URL
+    assert api._http_options.retry_options.attempts == 1
+    assert api._http_options.timeout == 8000
+
+
+def test_missing_key_is_a_config_error() -> None:
+    from support_agent.config import ConfigError
+
+    with pytest.raises(ConfigError):
+        GeminiClient(settings(api_key=None), client=StubSDK([]))
+
+
+# --- normalization ----------------------------------------------------------------------------
+
+
+def test_function_call_turn_is_preserved_unchanged() -> None:
+    call_part = types.Part(
+        function_call=types.FunctionCall(
+            name="get_my_orders", args={"order_id": "ord_1"}, id="call_1"
+        ),
+        thought_signature=b"opaque-signature",
+    )
+    resp = ok_response([call_part])
+    client, sdk, _ = make_client([resp, ok_response()])
+    out = client.generate(request())
+    assert out.final_json is None and not out.malformed
+    assert [(c.name, c.args, c.call_id) for c in out.function_calls] == [
+        ("get_my_orders", {"order_id": "ord_1"}, "call_1")
+    ]
+    assert out.raw_model_turn is resp.candidates[0].content
+
+    # Call #2 replays the raw turn untouched (thought signature intact) + the function response.
+    history = (
+        UserMessage("q"),
+        ModelTurn(out.raw_model_turn),
+        ToolResult("get_my_orders", {"status": "not_found", "orders": []}, "call_1"),
+    )
+    client.generate(request(contents=history, tool_mode="none"))
+    sent = sdk.models.calls[1]["contents"]
+    assert sent[1] is out.raw_model_turn
+    assert sent[1].parts[0].thought_signature == b"opaque-signature"
+    assert sent[2].role == "user"
+    fr = sent[2].parts[0].function_response
+    assert (fr.name, fr.id, fr.response) == ("get_my_orders", "call_1", history[2].response)
+
+
+def test_consecutive_tool_results_share_one_user_turn() -> None:
+    contents = to_contents(
+        [UserMessage("q"), ToolResult("a", {"x": 1}, "c1"), ToolResult("b", {"y": 2}, "c2")]
+    )
+    assert len(contents) == 2
+    assert [p.function_response.name for p in contents[1].parts] == ["a", "b"]
+
+
+def test_model_turn_must_be_a_gemini_content() -> None:
+    with pytest.raises(TypeError):
+        to_contents([ModelTurn({"role": "model"})])
+
+
+def test_thought_parts_are_not_answer_text() -> None:
+    resp = ok_response(
+        [types.Part(text="internal musing", thought=True), types.Part(text=json.dumps(FINAL))]
+    )
+    client, _, _ = make_client([resp])
+    out = client.generate(request())
+    assert out.final_json == FINAL
+    FinalAnswer.model_validate(out.final_json)
+
+
+def test_usage_normalization_is_none_safe() -> None:
+    assert to_usage(None).to_dict() == {"input": 0, "output": 0, "cached": 0, "thoughts": 0}
+    md = types.GenerateContentResponseUsageMetadata(
+        prompt_token_count=3300,
+        candidates_token_count=80,
+        cached_content_token_count=2048,
+        thoughts_token_count=None,
+    )
+    assert to_usage(md).to_dict() == {"input": 3300, "output": 80, "cached": 2048, "thoughts": 0}
+
+    client, _, _ = make_client([ok_response(usage=md)])
+    out = client.generate(request())
+    assert out.usage.cached == 2048 and out.usage.thoughts == 0
+    assert out.model_id == PRIMARY and out.finish_reason == "STOP"
