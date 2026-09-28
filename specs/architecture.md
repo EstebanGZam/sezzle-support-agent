@@ -164,7 +164,8 @@ else:                                                   route = "policy"   # inc
 | Malformed function call / unparseable JSON | `malformed_output` | → repair semantic call (step 7) | — | SEC-10 if repair fails (`validation_exhausted`) |
 | `MAX_LLM_CALLS_PER_BATCH` reached | `batch_limit` | — | — | SEC-10 for remaining cases |
 
-- **Settings:** `LLM_TIMEOUT_S` (default 8 s per attempt for eval robustness; the ADR-3 production target is lower), `LLM_MAX_ATTEMPTS=2`.
+- **Settings:** `LLM_TIMEOUT_S` (default 10 s per attempt, the API minimum), `CASE_DEADLINE_S` (default 30 s per case), `LLM_MAX_ATTEMPTS=2`.
+- **Consequence for ADR-3:** a client can't enforce a per-request deadline below 10 s on this API, so a p95 ≤ 3 s target has to come from low typical latency plus a production-side cutoff (e.g. an async cancel at the service layer), not from the SDK timeout.
 - **`PROMPT_VERSION`** = sha256 of (static system prefix + tool declarations + final-answer schema). `corpus_hash` = sha256 of the policy files concatenated in POL order. Both go in every trace line and in the run `config.json`.
 - The SDK's built-in retries stay **off** (its defaults of 5 attempts and a 60 s max delay conflict with SEC-07); our loop owns retries.
 - The fallback model must support tools + JSON schema together, i.e. **3.x Flash-Lite** (smoke test S-001).
@@ -177,10 +178,11 @@ else:                                                   route = "policy"   # inc
 | `LLM_PROVIDER` | `gemini` | `gemini` \| `fake` |
 | `GEMINI_PRIMARY_MODEL` | `gemini-3.5-flash-lite` (owner decision OD-15) | Configurable; explicit pinned ID, no `-latest` alias |
 | `GEMINI_FALLBACK_MODEL` | `gemini-3.1-flash-lite` (OD-15); empty = disabled | Must be compatible: tools + JSON response schema in one call. The config accepts a known-compatible set (`gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, verified by S-001); any other ID needs `--allow-unverified-model`, and a `live` compatibility test re-verifies. Equal to primary → ignored with a warning. The fallback uses the **same credential/project** (OD-16) |
-| `FAKE_LLM_SCRIPT` | empty | provider = `fake` only. Path to a JSON script of responses; if empty, the **default fake responder** returns one direct final answer per case: `{"answer": "[fake] offline answer", "escalation_reason": "none", "policy_applied": false, "cited_policies": []}`, which makes the CLI runnable offline (route `policy`) |
+| `FAKE_LLM_SCRIPT` | empty | provider = `fake` only. Path to a JSON script of responses; if empty, the **default fake responder** returns one direct final answer per case: `{"answer": "[fake] offline answer", "escalation_reason": "none", "policy_applied": false, "cited_policies": []}`, which makes the CLI runnable offline (route `policy`, or `escalate` + safe failure when the tripwire fires, since the fake answer has no hand-off) |
 | `GOOGLE_API_KEY` | — (required for `gemini`; exit 2 if missing) | **The only key source** [AR-09]. The adapter passes it explicitly to `genai.Client(api_key=…)` and never lets the SDK read `GEMINI_API_KEY`/`GOOGLE_API_KEY` from the inherited environment on its own. An inherited `GEMINI_API_KEY` (e.g. from tmux) is ignored. Run `config.json` records `credential_env_var` + `credential_fingerprint` (12-hex SHA-256 prefix), never the value |
 | `GEMINI_THINKING_LEVEL` | `minimal` | smoke test: no thought tokens billed at `minimal` |
-| `LLM_TIMEOUT_S` / `LLM_MAX_ATTEMPTS` | `8` / `2` | |
+| `LLM_TIMEOUT_S` / `LLM_MAX_ATTEMPTS` | `10` / `2` | The Gemini API rejects per-request deadlines below 10 s ("Minimum allowed deadline is 10s", observed in the live smoke call on 2026-09-28). Lower values are raised to 10 s with a warning |
+| `CASE_DEADLINE_S` | `30` | One absolute deadline per case, shared by all semantic calls and attempts (R-01 #4). No new attempt starts if less than 10 s remains; exhausted → SEC-10 with `timeout` |
 | `LLM_MAX_OUTPUT_TOKENS` | `600` | |
 | `INPUT_CHAR_CAP` | `2000` | |
 | `MAX_LLM_CALLS_PER_BATCH` | `2000` | batch-level consumption guard; exceeding it → safe failure for the remaining cases |

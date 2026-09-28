@@ -148,7 +148,7 @@ Canonical contract, identical to `specs/architecture.md`. The model returns the 
 
 Rules:
 - **Call budget.** At most 3 **semantic calls** per case (`purpose` ∈ `{initial, post_tool, repair}`). Each semantic call has at most `LLM_MAX_ATTEMPTS` (default 2) transport **attempts**, counted across primary and fallback together.
-- `attempts[].error_class` and the top-level `error_class` (the case's terminal class, `null` on success) ∈ `{null, rate_limit_minute, quota_daily, server_5xx, timeout, model_not_found, bad_request, auth_billing, blocked_safety, malformed_output, validation_exhausted, batch_limit}`. Handling is defined in §7.
+- `attempts[].error_class` and the top-level `error_class` (the case's terminal class, `null` on success) ∈ `{null, rate_limit_minute, quota_daily, server_5xx, timeout, model_not_found, bad_request, auth_billing, blocked_safety, malformed_output, validation_exhausted, batch_limit, invalid_input, internal_error}` (the last two were added in IP-06 for malformed input lines and unexpected per-case exceptions; both still write the SEC-10 line). Handling is defined in §7.
 - **Validator checks** (`check` name → verdict):
 
 | Check | Verdict on violation |
