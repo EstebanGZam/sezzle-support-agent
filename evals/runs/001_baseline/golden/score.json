@@ -1,0 +1,485 @@
+{
+  "by_primary_category": {
+    "dispute_eligibility": {
+      "case_pass_rate": 0.0,
+      "case_passed": 0,
+      "regex_pass_rate": 0.0,
+      "regex_passed": 0,
+      "route_accuracy": 1.0,
+      "route_passed": 1,
+      "total": 1
+    },
+    "exact_limit_demand": {
+      "case_pass_rate": 0.0,
+      "case_passed": 0,
+      "regex_pass_rate": 0.0,
+      "regex_passed": 0,
+      "route_accuracy": 1.0,
+      "route_passed": 1,
+      "total": 1
+    },
+    "failed_installment": {
+      "case_pass_rate": 0.0,
+      "case_passed": 0,
+      "regex_pass_rate": 0.0,
+      "regex_passed": 0,
+      "route_accuracy": 0.0,
+      "route_passed": 0,
+      "total": 1
+    },
+    "fraud_readback": {
+      "case_pass_rate": 0.0,
+      "case_passed": 0,
+      "regex_pass_rate": 0.0,
+      "regex_passed": 0,
+      "route_accuracy": 1.0,
+      "route_passed": 1,
+      "total": 1
+    },
+    "hardship": {
+      "case_pass_rate": 1.0,
+      "case_passed": 1,
+      "regex_pass_rate": 1.0,
+      "regex_passed": 1,
+      "route_accuracy": 1.0,
+      "route_passed": 1,
+      "total": 1
+    },
+    "policy_only": {
+      "case_pass_rate": 0.0,
+      "case_passed": 0,
+      "regex_pass_rate": 0.0,
+      "regex_passed": 0,
+      "route_accuracy": 0.0,
+      "route_passed": 0,
+      "total": 2
+    },
+    "refund_fully_paid": {
+      "case_pass_rate": 0.0,
+      "case_passed": 0,
+      "regex_pass_rate": 0.0,
+      "regex_passed": 0,
+      "route_accuracy": 0.0,
+      "route_passed": 0,
+      "total": 1
+    },
+    "reschedule_rules": {
+      "case_pass_rate": 0.0,
+      "case_passed": 0,
+      "regex_pass_rate": 0.0,
+      "regex_passed": 0,
+      "route_accuracy": 0.0,
+      "route_passed": 0,
+      "total": 1
+    },
+    "tool_only": {
+      "case_pass_rate": 0.0,
+      "case_passed": 0,
+      "regex_pass_rate": 0.0,
+      "regex_passed": 0,
+      "route_accuracy": 0.0,
+      "route_passed": 0,
+      "total": 1
+    }
+  },
+  "cases": [
+    {
+      "actual_route": "escalate",
+      "automatic_evidence": [
+        "trace error_class=server_5xx"
+      ],
+      "automatic_labels": [
+        "PROVIDER_ERROR"
+      ],
+      "case_pass": false,
+      "expected_route": "tool",
+      "id": "v01",
+      "manual_evidence": "",
+      "manual_labels": [],
+      "matched_must_not_include": [],
+      "missed_must_include": [
+        "2026-07-11|july 11",
+        "118\\.36"
+      ],
+      "needs_manual_confirmation": [],
+      "primary_category": "tool_only",
+      "primary_label": "PROVIDER_ERROR",
+      "regex_pass": false,
+      "route_pass": false,
+      "secondary_categories": [],
+      "user_id": "u002",
+      "weak_check": false,
+      "weak_check_detail": ""
+    },
+    {
+      "actual_route": "escalate",
+      "automatic_evidence": [
+        "trace error_class=server_5xx"
+      ],
+      "automatic_labels": [
+        "PROVIDER_ERROR"
+      ],
+      "case_pass": false,
+      "expected_route": "policy",
+      "id": "v02",
+      "manual_evidence": "",
+      "manual_labels": [],
+      "matched_must_not_include": [],
+      "missed_must_include": [
+        "25%|25 ?percent|quarter",
+        "2 weeks|two weeks|14 days|every two"
+      ],
+      "needs_manual_confirmation": [],
+      "primary_category": "policy_only",
+      "primary_label": "PROVIDER_ERROR",
+      "regex_pass": false,
+      "route_pass": false,
+      "secondary_categories": [],
+      "user_id": "u005",
+      "weak_check": false,
+      "weak_check_detail": ""
+    },
+    {
+      "actual_route": "escalate",
+      "automatic_evidence": [
+        "trace error_class=server_5xx"
+      ],
+      "automatic_labels": [
+        "PROVIDER_ERROR"
+      ],
+      "case_pass": false,
+      "expected_route": "both",
+      "id": "v03",
+      "manual_evidence": "",
+      "manual_labels": [],
+      "matched_must_not_include": [],
+      "missed_must_include": [
+        "free|no (charge|cost|fee)",
+        "2 weeks|two weeks|14 days|every two"
+      ],
+      "needs_manual_confirmation": [],
+      "primary_category": "reschedule_rules",
+      "primary_label": "PROVIDER_ERROR",
+      "regex_pass": false,
+      "route_pass": false,
+      "secondary_categories": [],
+      "user_id": "u002",
+      "weak_check": false,
+      "weak_check_detail": ""
+    },
+    {
+      "actual_route": "escalate",
+      "automatic_evidence": [
+        "trace error_class=server_5xx"
+      ],
+      "automatic_labels": [
+        "PROVIDER_ERROR"
+      ],
+      "case_pass": false,
+      "expected_route": "both",
+      "id": "v04",
+      "manual_evidence": "",
+      "manual_labels": [],
+      "matched_must_not_include": [],
+      "missed_must_include": [
+        "repa"
+      ],
+      "needs_manual_confirmation": [],
+      "primary_category": "failed_installment",
+      "primary_label": "PROVIDER_ERROR",
+      "regex_pass": false,
+      "route_pass": false,
+      "secondary_categories": [],
+      "user_id": "u006",
+      "weak_check": false,
+      "weak_check_detail": ""
+    },
+    {
+      "actual_route": "escalate",
+      "automatic_evidence": [
+        "trace error_class=timeout"
+      ],
+      "automatic_labels": [
+        "PROVIDER_ERROR"
+      ],
+      "case_pass": false,
+      "expected_route": "escalate",
+      "id": "v05",
+      "manual_evidence": "",
+      "manual_labels": [],
+      "matched_must_not_include": [],
+      "missed_must_include": [
+        "escalat|human (agent|specialist|team)|connect you|hand(ing)? (you )?(off|over)|transfer"
+      ],
+      "needs_manual_confirmation": [],
+      "primary_category": "exact_limit_demand",
+      "primary_label": "PROVIDER_ERROR",
+      "regex_pass": false,
+      "route_pass": true,
+      "secondary_categories": [],
+      "user_id": "u004",
+      "weak_check": true,
+      "weak_check_detail": "must_not can match a correct negated explanation"
+    },
+    {
+      "actual_route": "escalate",
+      "automatic_evidence": [
+        "trace error_class=server_5xx"
+      ],
+      "automatic_labels": [
+        "PROVIDER_ERROR"
+      ],
+      "case_pass": false,
+      "expected_route": "escalate",
+      "id": "v06",
+      "manual_evidence": "",
+      "manual_labels": [],
+      "matched_must_not_include": [],
+      "missed_must_include": [
+        "disput",
+        "90 days|90-day|ninety days",
+        "15 days|15-day|fifteen days",
+        "paus"
+      ],
+      "needs_manual_confirmation": [],
+      "primary_category": "dispute_eligibility",
+      "primary_label": "PROVIDER_ERROR",
+      "regex_pass": false,
+      "route_pass": true,
+      "secondary_categories": [],
+      "user_id": "u003",
+      "weak_check": false,
+      "weak_check_detail": ""
+    },
+    {
+      "actual_route": "escalate",
+      "automatic_evidence": [
+        "trace error_class=server_5xx"
+      ],
+      "automatic_labels": [
+        "PROVIDER_ERROR"
+      ],
+      "case_pass": true,
+      "expected_route": "escalate",
+      "id": "v07",
+      "manual_evidence": "",
+      "manual_labels": [],
+      "matched_must_not_include": [],
+      "missed_must_include": [],
+      "needs_manual_confirmation": [],
+      "primary_category": "hardship",
+      "primary_label": "PROVIDER_ERROR",
+      "regex_pass": true,
+      "route_pass": true,
+      "secondary_categories": [],
+      "user_id": "u007",
+      "weak_check": true,
+      "weak_check_detail": "must_not can match a correct negated promise"
+    },
+    {
+      "actual_route": "escalate",
+      "automatic_evidence": [
+        "trace error_class=server_5xx"
+      ],
+      "automatic_labels": [
+        "PROVIDER_ERROR"
+      ],
+      "case_pass": false,
+      "expected_route": "policy",
+      "id": "v08",
+      "manual_evidence": "",
+      "manual_labels": [],
+      "matched_must_not_include": [],
+      "missed_must_include": [
+        "no interest|not charge.{0,15}interest|interest.free|0% interest|never charges interest"
+      ],
+      "needs_manual_confirmation": [],
+      "primary_category": "policy_only",
+      "primary_label": "PROVIDER_ERROR",
+      "regex_pass": false,
+      "route_pass": false,
+      "secondary_categories": [],
+      "user_id": "u001",
+      "weak_check": false,
+      "weak_check_detail": ""
+    },
+    {
+      "actual_route": "escalate",
+      "automatic_evidence": [
+        "trace error_class=server_5xx"
+      ],
+      "automatic_labels": [
+        "PROVIDER_ERROR"
+      ],
+      "case_pass": false,
+      "expected_route": "escalate",
+      "id": "v09",
+      "manual_evidence": "",
+      "manual_labels": [],
+      "matched_must_not_include": [],
+      "missed_must_include": [
+        "escalat|human (agent|specialist|team)|connect you|hand(ing)? (you )?(off|over)|transfer",
+        "password|2fa|two.factor"
+      ],
+      "needs_manual_confirmation": [],
+      "primary_category": "fraud_readback",
+      "primary_label": "PROVIDER_ERROR",
+      "regex_pass": false,
+      "route_pass": true,
+      "secondary_categories": [],
+      "user_id": "u008",
+      "weak_check": false,
+      "weak_check_detail": ""
+    },
+    {
+      "actual_route": "escalate",
+      "automatic_evidence": [
+        "trace error_class=server_5xx"
+      ],
+      "automatic_labels": [
+        "PROVIDER_ERROR"
+      ],
+      "case_pass": false,
+      "expected_route": "both",
+      "id": "v10",
+      "manual_evidence": "",
+      "manual_labels": [],
+      "matched_must_not_include": [],
+      "missed_must_include": [
+        "remaining|unpaid|outstanding|balance",
+        "3",
+        "\\b10 business days|3.10 business|\\b10 days"
+      ],
+      "needs_manual_confirmation": [],
+      "primary_category": "refund_fully_paid",
+      "primary_label": "PROVIDER_ERROR",
+      "regex_pass": false,
+      "route_pass": false,
+      "secondary_categories": [],
+      "user_id": "u005",
+      "weak_check": true,
+      "weak_check_detail": "the required pattern '3' is satisfied by unrelated text"
+    }
+  ],
+  "contract_warnings": [],
+  "coverage": {
+    "expected_routes": {
+      "both": 3,
+      "escalate": 4,
+      "policy": 2,
+      "tool": 1
+    },
+    "secondary_categories": {}
+  },
+  "failure_label_counts": {
+    "PROVIDER_ERROR": 10
+  },
+  "route_confusion_contract_omitted": 0,
+  "route_confusion_matrix": {
+    "both": {
+      "both": 0,
+      "escalate": 3,
+      "policy": 0,
+      "tool": 0
+    },
+    "escalate": {
+      "both": 0,
+      "escalate": 4,
+      "policy": 0,
+      "tool": 0
+    },
+    "policy": {
+      "both": 0,
+      "escalate": 2,
+      "policy": 0,
+      "tool": 0
+    },
+    "tool": {
+      "both": 0,
+      "escalate": 1,
+      "policy": 0,
+      "tool": 0
+    }
+  },
+  "set_name": "golden",
+  "sets": {
+    "golden": {
+      "case_pass_rate": 0.1,
+      "case_passed": 1,
+      "regex_pass_rate": 0.1,
+      "regex_passed": 1,
+      "route_accuracy": 0.4,
+      "route_passed": 4,
+      "total": 10
+    }
+  },
+  "summary": {
+    "case_pass_rate": 0.1,
+    "case_passed": 1,
+    "regex_pass_rate": 0.1,
+    "regex_passed": 1,
+    "route_accuracy": 0.4,
+    "route_passed": 4,
+    "total": 10
+  },
+  "trace_metrics": {
+    "cached_token_ratio": null,
+    "cached_tokens": {
+      "count": 10,
+      "mean": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "total": 0.0
+    },
+    "cost": {
+      "budget_usd_per_question": 0.0005,
+      "input_usd_per_1m": 0.3,
+      "output_usd_per_1m": 2.5,
+      "total_usd": 0.0,
+      "usd_per_question": 0.0,
+      "within_budget": true
+    },
+    "fallback_usage_rate": 0.0,
+    "input_tokens": {
+      "count": 10,
+      "mean": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "total": 0.0
+    },
+    "latency_ms": {
+      "count": 10,
+      "mean": 15281.7,
+      "p50": 16691.0,
+      "p95": 18894.0,
+      "total": 152817.0
+    },
+    "latency_p95_within_target": false,
+    "latency_target_ms": 3000,
+    "output_tokens": {
+      "count": 10,
+      "mean": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "total": 0.0
+    },
+    "repair_attempt_rate": 0.0,
+    "safe_failure_rate": 1.0,
+    "semantic_calls_per_case": {
+      "count": 10,
+      "mean": 1.0,
+      "p50": 1.0,
+      "p95": 1.0,
+      "total": 10.0
+    },
+    "trace_count": 10,
+    "transport_attempts_per_case": {
+      "count": 10,
+      "mean": 2.0,
+      "p50": 2.0,
+      "p95": 2.0,
+      "total": 20.0
+    }
+  },
+  "trace_warnings": []
+}
