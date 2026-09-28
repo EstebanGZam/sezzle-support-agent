@@ -11,7 +11,8 @@ Required by the brief: "the prompts you used to build (including scaffolding ask
 | P-001 | Master advisory: requirements, research, SDD, orchestration, 20-section report | Claude Code lead (Opus 5.5) | `docs/planning/prompts/P-001-master-advisory-prompt.md` | `docs/planning/ADVISORY_REPORT.md`; 7 research teammates | Owner requested a stack comparison |
 | P-002 | Same text as P-001, re-sent after an account `/login` | lead | identical to P-001 | Not re-run (avoided duplicate spend) | — |
 | P-003 | Evidence-based stack comparison; owner keeps decision authority | lead | `docs/planning/prompts/P-003-stack-comparison-prompt.md` | `docs/planning/STACK_DECISION_MATRIX.md`; independent Codex review changed 6 recommendations | Owner approved direction (P-004) |
-| P-004 | Owner-approved technical direction + authorization of the SDD preparation phase | lead | `docs/planning/prompts/P-004-owner-approved-direction.md` | This repository's specs, ADR drafts, eval design, prompts, checklist | Owner decisions pending (`docs/readiness-checklist.md`) |
+| P-004 | Owner-approved technical direction + authorization of the SDD preparation phase | lead | `docs/planning/prompts/P-004-owner-approved-direction.md` | This repository's specs, ADR drafts, eval design, prompts, checklist | Owner decisions (P-005) |
+| P-005 | Owner decisions: model config, architecture approval, AR reconciliation, Gemini credential-provenance investigation, remote-repo gate | lead | `docs/planning/prompts/P-005-owner-final-preparation-decisions.md` | Credential investigation (`docs/reviews/credential-provenance-2026-09-27.md`); A-10 revised (original preserved); OD-15…OD-23; AR statuses; final readiness checklist | Awaiting explicit implementation authorization (OD-23) |
 
 ## 2. Development-agent prompts (lead → teammates)
 
@@ -33,4 +34,4 @@ _To be recorded at implementation time: full text of the static system prefix an
 
 | ID | Purpose | Target | Exact prompt | Observed |
 |---|---|---|---|---|
-| S-001 | Flash-Lite smoke test: function calling, JSON schema + tools, thought signatures, latency, caching probe. **Synthetic content only** (fictional store; no assessment material) | Gemini API (REST) | `docs/planning/smoke-test/smoke_flash_lite.py` | `docs/planning/smoke-test/results.json`: 3.5 & 3.1 Flash-Lite pass tools+schema; 2.5 Flash-Lite rejects the combination; explicit cache → 429 *free-tier limit 0* (key is on the free tier, A-10) |
+| S-001 | Flash-Lite smoke test: function calling, JSON schema + tools, thought signatures, latency, caching probe. **Synthetic content only** (fictional store; no assessment material) | Gemini API (REST) | `docs/planning/smoke-test/smoke_flash_lite.py` | `docs/planning/smoke-test/results.json`: 3.5 & 3.1 Flash-Lite pass tools+schema; 2.5 Flash-Lite rejects the combination; explicit cache → 429 *free-tier cache-storage limit 0*. **Original interpretation** ("key is on the free tier") was **revised** in P-005: inference available; billing unverified; cache quota ≠ inference (A-10 revised). Credential used: inherited `GEMINI_API_KEY`, fingerprint `53408af16a25` |

@@ -8,6 +8,9 @@ Implements `specs/requirements.md`. The three graded ADRs are in `DECISIONS.md`.
 - AR-03 validator design;
 - AR-04 neutral-facts boundary;
 - AR-07 human-only-action tripwire.
+- AR-09 explicit key source.
+
+Status of each AR after P-005: `docs/decision-log.md`.
 
 Canonical contracts (answer schema, route rule, error/retry table, trace fields, `PROMPT_VERSION`) are defined **here**, and `specs/evaluation.md` mirrors them.
 
@@ -58,7 +61,7 @@ Max LLM calls per case: **3** (answer-or-tool, post-tool answer, one repair). Ty
 
 **Exit codes:**
 - **0:** every input line produced an output line, including safe-failure lines.
-- **2:** unusable input/config (missing file, missing model/key). Nothing is written.
+- **2:** unusable input/config (missing file, missing `GOOGLE_API_KEY` for provider `gemini`, incompatible model without override). Nothing is written.
 - **3:** the auth/billing circuit breaker opened (§7). **All** lines are still written, with safe-failure answers from the breaker point on, plus one stderr diagnostic.
 
 ### 3.2 Tool: `get_my_orders`
@@ -142,6 +145,7 @@ else:                                                   route = "policy"   # inc
 - **Why `policy_applied` rather than citations** (review R-00 #5): the smoke test showed the same synthetic question labelled `tool` and `both` across runs, and citations are naturally emitted even on pure lookups. A dedicated boolean with a precise definition (§3.3) separates "I reported your data" from "I applied a rule to your data".
 - **Residual risk:** the model can still mis-set the flag. This is measured by ROUTE_MISS in eval, and prompt-level definition changes are logged in `ITERATION.md`. No per-case hacks.
 - **Unit tests:** cover all four routes, plus the precedence of `forced_reason` over the model's fields.
+- **Validation basis (P-005 §4):** the rule encodes the official route semantics: "answers what it can" → `policy`, "looks up what it must" → `tool`/`both`, "escalates what it shouldn't touch" → `escalate` (PROMPT.md "The problem"), plus the policy-mandated escalations (SEZ-P*). It contains no case-specific logic. Evidence is taken across golden, adversarial_dev and the unseen holdout, never golden alone.
 
 ## 7. Provider errors, retry, fallback (`llm/gemini.py`)
 
@@ -163,17 +167,18 @@ else:                                                   route = "policy"   # inc
 - **Settings:** `LLM_TIMEOUT_S` (default 8 s per attempt for eval robustness; the ADR-3 production target is lower), `LLM_MAX_ATTEMPTS=2`.
 - **`PROMPT_VERSION`** = sha256 of (static system prefix + tool declarations + final-answer schema). `corpus_hash` = sha256 of the policy files concatenated in POL order. Both go in every trace line and in the run `config.json`.
 - The SDK's built-in retries stay **off** (its defaults of 5 attempts and a 60 s max delay conflict with SEC-07); our loop owns retries.
-- The fallback model must support tools + JSON schema together, i.e. **3.x Flash-Lite** (smoke test). The free-tier key is never used as automatic fallback (A-10).
+- The fallback model must support tools + JSON schema together, i.e. **3.x Flash-Lite** (smoke test S-001).
+- Failover changes the **model only**, never the credential or project. There is no automatic switch to another project/key with different data-handling terms (OD-16).
 
 ## 8. Configuration (env; `.env` via `uv run --env-file .env`)
 
 | Var | Default | Notes |
 |---|---|---|
 | `LLM_PROVIDER` | `gemini` | `gemini` \| `fake` |
-| `GEMINI_PRIMARY_MODEL` | **no default — required** when provider = `gemini` (exit 2 if missing) | explicit pinned ID, no `-latest` alias. The value is set by the owner's model decision (OD-15, pending) in `.env`/README, not in code |
-| `GEMINI_FALLBACK_MODEL` | empty = fallback disabled | must be a 3.x Flash-Lite model (tools + JSON schema compatible); if equal to primary → ignored with a warning |
+| `GEMINI_PRIMARY_MODEL` | `gemini-3.5-flash-lite` (owner decision OD-15) | Configurable; explicit pinned ID, no `-latest` alias |
+| `GEMINI_FALLBACK_MODEL` | `gemini-3.1-flash-lite` (OD-15); empty = disabled | Must be compatible: tools + JSON response schema in one call. The config accepts a known-compatible set (`gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, verified by S-001); any other ID needs `--allow-unverified-model`, and a `live` compatibility test re-verifies. Equal to primary → ignored with a warning. The fallback uses the **same credential/project** (OD-16) |
 | `FAKE_LLM_SCRIPT` | empty | provider = `fake` only. Path to a JSON script of responses; if empty, the **default fake responder** returns one direct final answer per case: `{"answer": "[fake] offline answer", "escalation_reason": "none", "policy_applied": false, "cited_policies": []}`, which makes the CLI runnable offline (route `policy`) |
-| `GOOGLE_API_KEY` | — | SDK prefers it over `GEMINI_API_KEY`; the adapter passes the key explicitly |
+| `GOOGLE_API_KEY` | — (required for `gemini`; exit 2 if missing) | **The only key source** [AR-09]. The adapter passes it explicitly to `genai.Client(api_key=…)` and never lets the SDK read `GEMINI_API_KEY`/`GOOGLE_API_KEY` from the inherited environment on its own. An inherited `GEMINI_API_KEY` (e.g. from tmux) is ignored. Run `config.json` records `credential_env_var` + `credential_fingerprint` (12-hex SHA-256 prefix), never the value |
 | `GEMINI_THINKING_LEVEL` | `minimal` | smoke test: no thought tokens billed at `minimal` |
 | `LLM_TIMEOUT_S` / `LLM_MAX_ATTEMPTS` | `8` / `2` | |
 | `LLM_MAX_OUTPUT_TOKENS` | `600` | |

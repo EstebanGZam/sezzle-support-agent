@@ -1,6 +1,6 @@
 # Sequential Implementation Prompts
 
-Short, one-stage prompts. Before dispatch, the owner must have approved the AR bundle (AR-01…AR-07) and set the primary model (OD-15).
+Dispatch gate: explicit owner authorization (OD-23). Models are set (OD-15); AR statuses are in `docs/decision-log.md`.
 
 Short, one-stage prompts. The LEAD dispatches them in order (IMP prompts sequentially in one worktree; EVAL prompts in parallel in a separate worktree). Each prompt is sent verbatim, prefixed by the common header. The exact text sent is logged in `PROMPTS.md`. **Do not dispatch any prompt until the owner authorizes implementation.**
 
@@ -23,8 +23,12 @@ Never read /home/esteban/Documents/Sezzle/holdout/. No real LLM calls unless the
 - **Acceptance:**
   - `uv sync --locked` works.
   - `Settings.from_env()` defaults match architecture §8.
-  - With `LLM_PROVIDER=gemini`, a missing `GEMINI_PRIMARY_MODEL` or key raises a clear config error (the CLI maps it to exit 2).
-  - With `fake`, neither is required.
+  - Model defaults are `gemini-3.5-flash-lite` / `gemini-3.1-flash-lite`, overridable by env.
+  - An incompatible model ID without override raises a config error.
+  - With `LLM_PROVIDER=gemini`, a missing `GOOGLE_API_KEY` raises a clear config error (the CLI maps it to exit 2).
+  - An inherited `GEMINI_API_KEY` is **ignored** (test sets it and asserts it isn't used).
+  - `credential_fingerprint()` returns a 12-hex SHA-256 prefix.
+  - With `fake`, no key is required.
   - `repr(settings)` never shows the key.
   - `tests/test_config.py` passes.
 - **Verify:** `uv run ruff check . && uv run pytest -q`

@@ -34,9 +34,9 @@
 
 ## ADR-3 — Cost/latency at 100k questions/day, $50/day, p95 ≤ 3 s
 - **Decision:**
-  - Model: Gemini Flash-Lite `[PRIMARY — owner decision OD-15]` with minimal thinking.
+  - Model: `gemini-3.5-flash-lite` (owner decision OD-15) with minimal thinking.
   - At most 1 tool round: policy and escalation questions take 1 call, order questions take 2.
-  - Capped output; one bounded retry, then failover to `[FALLBACK]`; a safe escalation instead of long retries.
+  - Capped output; one bounded retry, then failover to `gemini-3.1-flash-lite`; a safe escalation instead of long retries.
 - **Options:** a larger model; a 2-call loop for every question; one call with the shopper's orders prefetched; prefix caching; a smaller prefix via retrieval.
 - **Why:** the budget is $50 / 100k = **$0.0005 per question**. Flash-Lite with one call for most intents is the only option that fits without dropping the tool loop that keeps order data minimal and observable. Measured: `[MEASURE: mean input/cached/output tokens; $/question; p50/p95 ms]`.
 - **What I'd trade, in order:**

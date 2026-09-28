@@ -174,7 +174,7 @@ Rules:
   - `answers.jsonl`: raw `run_cases.py` output
   - `trace.jsonl`
   - `score.md`: tables, per-case failure labels, delta vs the previous run
-  - `config.json`: model id, fallback id, temperature, max output tokens, timeout, `LLM_MAX_ATTEMPTS` and retry policy, `prompt_version` and `corpus_hash` (as defined in §5), git SHA, sha256 of every case file, run date, and a `holdout-contaminated` flag
+  - `config.json`: model id, fallback id, temperature, max output tokens, timeout, `LLM_MAX_ATTEMPTS` and retry policy, `prompt_version` and `corpus_hash` (as defined in §5), git SHA, sha256 of every case file, run date, `credential_env_var` + `credential_fingerprint` (12-hex SHA-256 prefix, never the value; AR-09), and a `holdout-contaminated` flag
 - **One command per run.** `run_cases.py` is run over each set, then `evals/score.py`. The sets are scored separately, never concatenated into one number.
 - **Run 001 = baseline.** Golden + adversarial_dev with the first working pipeline, committed **unedited**, including its failures (SEZ-D03).
 - **Iteration loop.** One hypothesis → one change → rerun golden + dev → delta table in `score.md` and `ITERATION.md`: pass-rate delta per set, per-case flips (fail→pass and pass→fail), and label counts before and after. A change that fixes one case and breaks another is reported as such.

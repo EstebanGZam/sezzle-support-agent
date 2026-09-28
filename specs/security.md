@@ -28,7 +28,7 @@ Invariant: **authorization is decided only at the harness → tool edge.** The m
 | LLM10 Unbounded consumption | Long inputs, loops, retry storms, runaway batch cost | [S] input cap; ≤1 tool round; ≤3 LLM calls per case; max output tokens; per-call timeout; bounded retries; batch call counter; fail fast on auth/billing | SEC-05, 07 |
 | Domain restriction | General-purpose use (code, essays, trivia) | [S] no tools beyond order lookup, low max output tokens, out-of-scope → `policy` route with no tool call (validator warns if a tool was used). [P] scope statement + brief decline template guidance | OWN-10, A-09 |
 | Supply chain / secrets | Leaked key, vulnerable deps | [S] `.env` git-ignored before the first commit; key passed explicitly and never traced; gitleaks in CI; `uv.lock` pinned; 2 runtime deps | SEC-13 |
-| Data handling | Assessment material processed under Unpaid (training/human-review) terms | Process: real runs only after the owner confirms billing (A-10) | SEC-14 |
+| Data handling | Assessment material processed under Unpaid (training/human-review) terms | [S] key only from `GOOGLE_API_KEY` (AR-09); failover never changes credential/project (OD-16). Process: owner confirms the project's data-handling terms before real runs (A-10 revised) | SEC-14 |
 
 ## 3. Tripwire (SEC-09) — rules [AR-07 for the human-only-action category]
 - **Purpose:** make the costliest misses structural, not prompt-dependent. It is a one-way escalation signal, **not a router and not an answerer**.
@@ -73,5 +73,5 @@ Runs on every parsed `FinalAnswer` before route derivation. Each check records `
 - [ ] The key is read from env; never printed, traced, or placed in prompts. The trace schema has no header/request fields.
 - [ ] `gitleaks detect` (CI) + `git log -p | grep -E 'AIza|sk-'` before every push/zip.
 - [ ] PROMPTS.md, traces and screenshots are reviewed for keys before commit.
-- [ ] Real runs only on a billed project (A-10). Budget alert set by the owner.
+- [ ] Real runs only with the owner-provided `GOOGLE_API_KEY` whose project's data-handling terms the owner has confirmed (A-10 revised, SEC-14). Inherited `GEMINI_API_KEY` is ignored (AR-09). Budget alert set by the owner.
 - [ ] Private repo only; no public deploy; zip excludes `.env` and `.venv/`.

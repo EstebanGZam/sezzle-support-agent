@@ -17,3 +17,5 @@ Reviewer: Codex (A-011), independent of the spec author (lead, Claude). Fixes we
 | 11 | MAJOR | Implementation prompts require guessing | T-01 owns `llm/__init__.py`; every prompt uses the full lint/format/test gate; a default fake responder makes the offline CLI runnable; IP-04/IP-05/IP-06 acceptance criteria updated. | implementation-prompts, architecture §8, tasks |
 | 12 | MAJOR | Not credible in ~2 h | Scope tiers with explicit cut order (Tier 3 first: CI/zip automation, automated taxonomy/noise floor, derived-fact breadth, concurrency). | tasks "Scope tiers" |
 | 13 | MINOR | ADR format / measurement wording | ADR-3 gains an explicit **Why**; exact smoke-test medians with n=3 caveat; absolute claims removed from ADR-1. | DECISIONS.md |
+
+> **Update (P-005):** Finding #1 was fully resolved by owner decision OD-15. The config now defaults to `gemini-3.5-flash-lite` / `gemini-3.1-flash-lite` (still overridable), instead of the interim "no default" state described above. The row is kept as the historical resolution record.

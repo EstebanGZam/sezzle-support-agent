@@ -10,7 +10,7 @@ Owner-approved structure (OD-10). The Orchestrator lead coordinates; the owner a
 | Evaluation agent (EVAL) | Claude teammate in a separate worktree; owns `evals/`, case sets, eval runs | Claude subscription |
 | Independent reviewer (REV) | Codex CLI, read-only review; different provider from the implementer | ChatGPT/Codex subscription |
 | Claude Cloud | Optional; not on the critical path (Orchestrator cannot launch/track cloud sessions — verified) | Claude cloud-session credit (unverified promo) |
-| Support-assistant LLM | Gemini API, called by application code | Google project billing — **must be paid tier** (A-10) |
+| Support-assistant LLM | Gemini API (`gemini-3.5-flash-lite`, fallback `gemini-3.1-flash-lite`), called by application code | Owner-managed `GOOGLE_API_KEY`; the owner confirms the project's data-handling terms (A-10 revised). Note: agent panes inherit a `GEMINI_API_KEY` from the tmux global environment, and the application ignores it (AR-09) |
 
 ## Responsibilities (RACI-lite)
 | Activity | LEAD | IMP | EVAL | REV | OWNER |
