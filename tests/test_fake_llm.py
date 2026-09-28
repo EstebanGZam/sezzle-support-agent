@@ -202,7 +202,7 @@ def test_error_injection_per_kind_with_fallback(kind: str) -> None:
         assert llm.attempt_models == ["fake-primary"]
         return
     resp = llm.generate(request())
-    second = "fake-primary" if rule.same_model_retry else "fake-fallback"
+    second = "fake-fallback" if rule.fallback_eligible else "fake-primary"
     assert llm.attempt_models == ["fake-primary", second]
     assert resp.model_id == second and resp.final_json == FINAL
     assert resp.fallback_used is (second == "fake-fallback")

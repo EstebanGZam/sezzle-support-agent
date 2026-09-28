@@ -28,7 +28,8 @@ DEFAULT_THINKING_LEVEL = "minimal"
 DEFAULT_TIMEOUT_S = 10.0
 # The Gemini API rejects request deadlines below 10 s (HTTP 400 INVALID_ARGUMENT).
 GEMINI_MIN_TIMEOUT_S = 10.0
-DEFAULT_MAX_ATTEMPTS = 2
+# Primary → fallback → one optional same-model retry (architecture §7), deadline permitting.
+DEFAULT_MAX_ATTEMPTS = 3
 # One absolute wall-clock budget per case, shared by every semantic call and transport attempt
 # (architecture §7 "case deadline"); ≥ 2x the Gemini minimum so a timeout can be retried once.
 DEFAULT_CASE_DEADLINE_S = 30.0

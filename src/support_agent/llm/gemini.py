@@ -17,13 +17,17 @@ Error classification (``classify_exception``), per the §7 table:
 
 - 401/403 or status ``UNAUTHENTICATED``/``PERMISSION_DENIED``/``FAILED_PRECONDITION``, or a 400
   whose message/details mention the API key or billing → ``auth_billing``.
-- 404 → ``model_not_found``; 408 → ``timeout``; other 4xx → ``bad_request``; 5xx → ``server_5xx``.
+- 404 → ``model_not_found``; 408 → ``timeout``; other 4xx → ``bad_request``.
+- 503 ``UNAVAILABLE`` ("model is experiencing high demand") and 504 ``DEADLINE_EXCEEDED`` (the
+  server gave up) → ``overloaded``: no same-model retry, straight to the fallback model, and they
+  feed the primary health breaker. Other 5xx → ``server_5xx``.
 - 429 heuristic: ``quota_daily`` if the error message or details (``QuotaFailure`` quota id/
   metric) name a per-day quota (``PerDay``, "per day", "daily"), or the quota value is 0
   ("limit: 0": the tier has no quota for the model, so waiting cannot help); otherwise
   ``rate_limit_minute`` (per-minute quota ids, or no hint at all). The generic free-tier text
   "check your plan and billing details" appears on both and is deliberately not a signal.
-- Client-side timeouts (``httpx.TimeoutException``, ``TimeoutError``) → ``timeout``; other
+- Client-side timeouts (``httpx.TimeoutException``, ``TimeoutError``) → ``timeout`` (not
+  ``overloaded``: the server never answered); other
   transport failures (connect/reset) → ``server_5xx``: transient, retry- and fallback-eligible.
 - Finish reason SAFETY/PROHIBITED_CONTENT/BLOCKLIST/SPII (or a blocked prompt) → ``blocked_safety``.
 
@@ -74,6 +78,8 @@ BLOCKED_FINISH_REASONS = frozenset(
     }
 )
 _AUTH_STATUSES = frozenset({"UNAUTHENTICATED", "PERMISSION_DENIED", "FAILED_PRECONDITION"})
+_OVERLOAD_CODES = frozenset({503, 504})
+_OVERLOAD_STATUSES = frozenset({"UNAVAILABLE", "DEADLINE_EXCEEDED"})
 _AUTH_HINT_RE = re.compile(r"api[\s_-]?key|billing", re.I)
 _DAILY_HINT_RE = re.compile(r"per[\s_-]?day|daily|\"quotaValue\":\s*\"0\"|limit:\s*0\b", re.I)
 _MAX_MESSAGE_CHARS = 300
@@ -105,6 +111,8 @@ class GeminiClient:
             settings.fallback_model,
             max_attempts=settings.max_attempts,
             timeout_s=max(settings.timeout_s, GEMINI_MIN_TIMEOUT_S),
+            # An attempt with less time left than the API minimum cannot succeed: don't start it.
+            min_attempt_s=GEMINI_MIN_TIMEOUT_S,
             sleep=sleep,
             clock=clock,
         )
@@ -338,6 +346,8 @@ def classify_api_error(exc: errors.APIError) -> str:
         return "quota_daily" if _DAILY_HINT_RE.search(blob) else "rate_limit_minute"
     if 400 <= code < 500:
         return "bad_request"
+    if code in _OVERLOAD_CODES or status in _OVERLOAD_STATUSES:
+        return "overloaded"
     return "server_5xx"
 
 
