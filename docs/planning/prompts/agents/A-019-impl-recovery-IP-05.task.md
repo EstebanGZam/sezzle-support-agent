@@ -1,0 +1,10 @@
+RECOVERY HANDOFF — continue the existing implementation; do NOT restart from scratch.
+
+First inspect `git status`, `git diff`, `git log --oneline -5`, the changed/untracked files and the existing tests in this worktree. Preserve correct partial work. Determine what is complete and what remains, then continue from the current repository state until the original acceptance criteria pass.
+
+- Original objective: IP-05 — Prompts + guards (T-06, T-09) exactly as in docs/implementation-prompts.md and the original task text docs/planning/prompts/agents/A-018-impl-IP-05.task.md (same file ownership, specs and key requirements apply). Read AGENTS.md first.
+- Acceptance criteria: IP-05 ACs in docs/implementation-prompts.md; specs/security.md §3 (tripwire 4 categories, precision-first; must NOT fire on informational questions) and §4 (typed-claim validator table + ALL required must-pass/must-fail fixtures in tests/test_validator.py); FULL gate `uv run ruff check . && uv run ruff format --check . && uv run pytest -q`.
+- Previous provider: claude (previous session). Reason for failover: the previous session hit its usage/session limit mid-task (not a code failure).
+- Completed work: T-06 committed (f0f7918 feat(prompts) — prompts.py, tests/test_prompts.py). Partial T-09 (uncommitted, untracked): src/support_agent/guards.py, tests/test_guards.py.
+- Pending work: finish guards.py; fix 4 failing tests in tests/test_guards.py (test_input_guard_strips_control_and_format_chars; test_tripwire_fires_on_request_phrasings[fraud-I never authorized that payment.]; test_tripwire_never_produces_answer_text; test_synthetic_phrasings_are_not_copied_from_cases) — decide per test whether code or test is wrong against the spec, and never weaken a spec requirement to make a test pass (report it instead); write tests/test_validator.py with every security §4 fixture; commit T-09 as feat(guards) [T-09].
+- Rules: never read /home/esteban/Documents/Sezzle/holdout/; no real LLM calls; no .env access; don't modify files outside src/support_agent/{prompts,guards}.py and tests/test_{prompts,guards,validator}.py. Report ACs with evidence, gate output, deviations, open issues.
