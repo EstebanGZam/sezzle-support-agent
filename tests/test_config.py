@@ -5,6 +5,7 @@ import re
 import pytest
 
 from support_agent.config import (
+    GEMINI_MIN_TIMEOUT_S,
     KNOWN_COMPATIBLE_MODELS,
     PROJECT_ROOT,
     ConfigError,
@@ -26,7 +27,7 @@ def test_defaults_match_architecture():
     assert s.primary_model == "gemini-3.5-flash-lite"
     assert s.fallback_model == "gemini-3.1-flash-lite"
     assert s.thinking_level == "minimal"
-    assert s.timeout_s == 8.0
+    assert s.timeout_s == 10.0
     assert s.max_attempts == 2
     assert s.max_output_tokens == 600
     assert s.input_char_cap == 2000
@@ -67,7 +68,7 @@ def test_models_overridable_by_env():
 def test_numeric_overrides():
     s = Settings.from_env(
         gemini_env(
-            LLM_TIMEOUT_S="2.5",
+            LLM_TIMEOUT_S="12.5",
             LLM_MAX_ATTEMPTS="3",
             LLM_MAX_OUTPUT_TOKENS="800",
             INPUT_CHAR_CAP="1000",
@@ -75,7 +76,7 @@ def test_numeric_overrides():
             GEMINI_THINKING_LEVEL="LOW",
         )
     )
-    assert (s.timeout_s, s.max_attempts, s.max_output_tokens) == (2.5, 3, 800)
+    assert (s.timeout_s, s.max_attempts, s.max_output_tokens) == (12.5, 3, 800)
     assert (s.input_char_cap, s.max_llm_calls_per_batch, s.thinking_level) == (1000, 10, "low")
 
 
@@ -99,9 +100,28 @@ def test_invalid_values_raise_config_error(var, value):
         Settings.from_env(gemini_env(**{var: value}))
 
 
+@pytest.mark.parametrize("value", ["8", "2.5", "9.99"])
+def test_gemini_timeout_below_minimum_is_raised_with_warning(value):
+    s = Settings.from_env(gemini_env(LLM_TIMEOUT_S=value))
+    assert s.timeout_s == GEMINI_MIN_TIMEOUT_S == 10.0
+    assert len(s.warnings) == 1
+    assert "LLM_TIMEOUT_S" in s.warnings[0] and "raised to 10" in s.warnings[0]
+
+
+def test_gemini_timeout_at_or_above_minimum_is_kept_without_warning():
+    assert Settings.from_env(gemini_env(LLM_TIMEOUT_S="10")).timeout_s == 10.0
+    s = Settings.from_env(gemini_env(LLM_TIMEOUT_S="15"))
+    assert (s.timeout_s, s.warnings) == (15.0, ())
+
+
+def test_fake_provider_timeout_is_not_clamped():
+    s = Settings.from_env({"LLM_PROVIDER": "fake", "LLM_TIMEOUT_S": "2.5"})
+    assert (s.timeout_s, s.warnings) == (2.5, ())
+
+
 def test_empty_values_fall_back_to_defaults():
     s = Settings.from_env(gemini_env(LLM_TIMEOUT_S="", GEMINI_PRIMARY_MODEL=" "))
-    assert s.timeout_s == 8.0
+    assert s.timeout_s == 10.0
     assert s.primary_model == "gemini-3.5-flash-lite"
 
 

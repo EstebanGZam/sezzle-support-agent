@@ -14,7 +14,7 @@ import httpx
 import pytest
 from google.genai import errors, types
 
-from support_agent.config import Secret, Settings
+from support_agent.config import GEMINI_MIN_TIMEOUT_S, Secret, Settings
 from support_agent.llm import (
     AuthBillingError,
     FinalAnswer,
@@ -88,7 +88,7 @@ def settings(**overrides: Any) -> Settings:
         "fallback_model": FALLBACK,
         "api_key": Secret(KEY),
         "max_attempts": 2,
-        "timeout_s": 8.0,
+        "timeout_s": 10.0,
     }
     base.update(overrides)
     return Settings(**base)
@@ -427,22 +427,41 @@ def _timing_out(seconds: float):
 
 
 def test_timeout_retry_when_deadline_allows_uses_remaining_time() -> None:
-    client, sdk, _ = make_client([_timing_out(8.0), ok_response()])
-    deadline = 1000.0 + 10.0
-    resp = client.generate(request(deadline=deadline))
+    client, sdk, _ = make_client([_timing_out(20.0), ok_response()], timeout_s=20.0)
+    resp = client.generate(request(deadline=1000.0 + 32.0))
     assert [a.status for a in resp.attempts] == ["retry", "ok"]
-    assert resp.attempts[0].latency_ms == 8000
+    assert resp.attempts[0].latency_ms == 20000
     timeouts = [c["config"].http_options.timeout for c in sdk.models.calls]
-    assert timeouts == [8000, 2000]  # second attempt capped by the remaining case time
+    assert timeouts == [20000, 12000]  # second attempt capped by the remaining case time
 
 
 def test_timeout_not_retried_when_deadline_does_not_allow() -> None:
-    client, sdk, _ = make_client([_timing_out(8.0), ok_response()])
+    client, sdk, _ = make_client([_timing_out(10.0), ok_response()])
     with pytest.raises(ProviderError) as info:
-        client.generate(request(deadline=1000.0 + 8.2))
+        client.generate(request(deadline=1000.0 + 10.2))
     assert info.value.kind == "timeout"
     assert [a.status for a in info.value.attempts] == ["failed"]
     assert len(sdk.models.calls) == 1
+
+
+def test_remaining_time_below_api_minimum_makes_no_transport_call() -> None:
+    client, sdk, _ = make_client([_timing_out(10.0), ok_response()])
+    with pytest.raises(ProviderError) as info:
+        client.generate(request(deadline=1000.0 + 15.0))  # 5 s left: too short for the API
+    assert info.value.kind == "timeout"
+    assert [a.status for a in info.value.attempts] == ["retry", "failed"]
+    assert len(sdk.models.calls) == 1
+
+
+@pytest.mark.parametrize("configured", [0.5, 8.0, 9.99])
+def test_sdk_timeout_is_never_below_the_api_minimum(configured: float) -> None:
+    client, sdk, _ = make_client([ok_response(), ok_response()], timeout_s=configured)
+    client.generate(request())
+    client.generate(request(deadline=1000.0 + 60.0))
+    for call in sdk.models.calls:
+        assert call["config"].http_options.timeout >= GEMINI_MIN_TIMEOUT_S * 1000
+    real = GeminiClient(settings(timeout_s=configured))  # constructs the SDK client; no request
+    assert real._client._api_client._http_options.timeout >= GEMINI_MIN_TIMEOUT_S * 1000
 
 
 def test_expired_deadline_makes_no_attempt() -> None:
@@ -462,7 +481,7 @@ def test_config_auto_mode_with_tools_schema_and_thinking() -> None:
     config: types.GenerateContentConfig = sdk.models.calls[0]["config"]
     assert config.automatic_function_calling.disable is True
     assert config.http_options.retry_options.attempts == 1
-    assert config.http_options.timeout == 8000
+    assert config.http_options.timeout == 10000
     assert config.tool_config.function_calling_config.mode == types.FunctionCallingConfigMode.AUTO
     assert config.thinking_config.thinking_level == types.ThinkingLevel.MINIMAL
     assert config.max_output_tokens == 600
@@ -521,7 +540,7 @@ def test_real_sdk_client_uses_only_the_settings_key(monkeypatch: pytest.MonkeyPa
     assert api.vertexai is False
     assert api._http_options.base_url == GEMINI_BASE_URL
     assert api._http_options.retry_options.attempts == 1
-    assert api._http_options.timeout == 8000
+    assert api._http_options.timeout == 10000
 
 
 def test_missing_key_is_a_config_error() -> None:
