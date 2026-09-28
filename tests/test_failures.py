@@ -94,6 +94,30 @@ def test_retryable_error_persisting_is_safe_failure(resources, statics, kind):
     _assert_budgets(result)
 
 
+@pytest.mark.parametrize("kind", ["overloaded", "rate_limit_minute", "server_5xx", "timeout"])
+def test_transient_error_tries_the_fallback_before_a_same_model_retry(resources, statics, kind):
+    result, llm = _answer(resources, statics, [_err(kind), _final()], fallback="fake-fallback")
+    assert result.error_class is None and result.route == "policy"
+    assert llm.attempt_models == ["fake-primary", "fake-fallback"]
+    assert result.trace.fallback_used is True
+    _assert_budgets(result)
+
+
+def test_overloaded_without_fallback_is_safe_failure_without_retry(resources, statics):
+    result, llm = _answer(resources, statics, [_err("overloaded"), _final()])
+    _assert_safe_failure(result, "overloaded")
+    assert llm.attempt_models == ["fake-primary"]
+
+
+def test_overloaded_on_both_models_records_fallback_use(resources, statics):
+    script = [_err("overloaded"), _err("overloaded")]
+    result, llm = _answer(resources, statics, script, fallback="fake-fallback")
+    _assert_safe_failure(result, "overloaded")
+    assert llm.attempt_models == ["fake-primary", "fake-fallback"]
+    assert result.trace.fallback_used is True
+    _assert_budgets(result)
+
+
 @pytest.mark.parametrize("kind", ["quota_daily", "model_not_found"])
 def test_fallback_eligible_error_uses_fallback(resources, statics, kind):
     result, llm = _answer(resources, statics, [_err(kind), _final()], fallback="fake-fallback")
@@ -354,6 +378,29 @@ def test_one_crashing_case_does_not_abort_the_batch(cli, tmp_path):
     assert [t["error_class"] for t in traces] == [None, "internal_error", "internal_error"]
     assert rows[1]["answer"] == SAFE_FAILURE_ANSWER
     assert "FakeScriptExhausted" in err
+
+
+def test_primary_cooldown_through_cli_is_traced(cli, tmp_path):
+    # Two consecutive primary overloads (cases k0, k1): later cases start on the fallback.
+    steps = [_err("overloaded"), _final(), _err("overloaded"), _final(), _final(), _final()]
+    env = {
+        "LLM_PROVIDER": "fake",
+        "FAKE_LLM_SCRIPT": str(_script(tmp_path, steps)),
+        "LLM_MAX_ATTEMPTS": "3",
+    }
+    code, rows, traces, _ = _cli_run(cli, tmp_path, _cases(tmp_path, 4), env)
+    assert code == 0
+    assert [t["error_class"] for t in traces] == [None] * 4
+    first_attempts = [t["llm_calls"][0]["attempts"] for t in traces]
+    assert [[(a["reason"], a["status"]) for a in att] for att in first_attempts[:2]] == [
+        [("primary", "fallback"), ("failover", "ok")]
+    ] * 2
+    for att in first_attempts[2:]:
+        assert [(a["model"], a["reason"]) for a in att] == [
+            ("fake:gemini-3.1-flash-lite", "primary_cooldown")
+        ]
+    assert all(t["fallback_used"] for t in traces)
+    assert all(r["answer"] != SAFE_FAILURE_ANSWER for r in rows)
 
 
 def test_mixed_failures_batch_continues(cli, tmp_path):

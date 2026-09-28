@@ -361,7 +361,7 @@ class _CaseRun:
         except ProviderError as err:
             attempts = tuple(a.to_dict() for a in err.attempts)
             self.calls.append(LLMCallRecord(purpose, attempts, "error"))
-            self.fallback_used |= any(a["status"] == "fallback" for a in attempts)
+            self.fallback_used |= err.fallback_used
             raise
         outcome = (
             "function_calls"

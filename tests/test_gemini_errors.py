@@ -24,7 +24,11 @@ from support_agent.llm import (
     ToolResult,
     UserMessage,
 )
-from support_agent.llm.base import MAX_BACKOFF_S
+from support_agent.llm.base import (
+    MAX_BACKOFF_S,
+    PRIMARY_BREAKER_THRESHOLD,
+    PRIMARY_COOLDOWN_CALLS,
+)
 from support_agent.llm.gemini import (
     GEMINI_BASE_URL,
     GeminiClient,
@@ -159,7 +163,13 @@ RATE_MINUTE = api_error(
 QUOTA_DAY = api_error(
     429, "RESOURCE_EXHAUSTED", QUOTA_MSG, quota_failure("GenerateRequestsPerDayPerProjectPerModel")
 )
-SERVER_503 = api_error(503, "UNAVAILABLE", "The model is overloaded.")
+SERVER_503 = api_error(
+    503, "UNAVAILABLE", "This model is currently experiencing high demand. Try again later."
+)
+SERVER_504 = api_error(
+    504, "DEADLINE_EXCEEDED", "Deadline expired before operation could complete."
+)
+SERVER_500 = api_error(500, "INTERNAL", "Internal error")
 NOT_FOUND = api_error(404, "NOT_FOUND", "models/x is not found for API version v1beta")
 BAD_REQUEST = api_error(400, "INVALID_ARGUMENT", "Invalid JSON payload received.")
 BAD_KEY = api_error(
@@ -192,10 +202,12 @@ READ_TIMEOUT = httpx.ReadTimeout("timed out")
             ),
             "quota_daily",
         ),
-        (api_error(500, "INTERNAL", "Internal error"), "server_5xx"),
+        (SERVER_500, "server_5xx"),
         (api_error(502, "", "Bad gateway"), "server_5xx"),
-        (SERVER_503, "server_5xx"),
-        (api_error(504, "DEADLINE_EXCEEDED", "Deadline exceeded"), "server_5xx"),
+        (SERVER_503, "overloaded"),
+        (api_error(503, "", "Service unavailable"), "overloaded"),
+        (SERVER_504, "overloaded"),
+        (api_error(504, "", "Gateway timeout"), "overloaded"),
         (READ_TIMEOUT, "timeout"),
         (httpx.ConnectTimeout("connect timed out"), "timeout"),
         (TimeoutError("timed out"), "timeout"),
@@ -241,7 +253,8 @@ def test_error_message_never_contains_the_key() -> None:
 TABLE = [
     (RATE_MINUTE, "rate_limit_minute", True, True),
     (QUOTA_DAY, "quota_daily", False, True),
-    (SERVER_503, "server_5xx", True, True),
+    (SERVER_503, "overloaded", False, True),
+    (SERVER_500, "server_5xx", True, True),
     (READ_TIMEOUT, "timeout", True, True),
     (NOT_FOUND, "model_not_found", False, True),
     (BAD_REQUEST, "bad_request", False, False),
@@ -258,20 +271,28 @@ def test_first_failure_then_success(first: Any, kind: str, retry: bool, fallback
         assert info.value.kind == kind
         assert sdk.models.models_called == [PRIMARY]  # never retried, never failed over
         assert [a.to_dict() for a in info.value.attempts] == [
-            {"model": PRIMARY, "status": "failed", "error_class": kind, "latency_ms": 0}
+            {
+                "model": PRIMARY,
+                "reason": "primary",
+                "status": "failed",
+                "error_class": kind,
+                "latency_ms": 0,
+            }
         ]
         return
 
+    # With a fallback configured, every fallback-eligible error tries it before any same-model
+    # retry (all of them are fallback-eligible here).
+    assert fallback
     resp = client.generate(request())
     assert resp.final_json == FINAL
-    expected_second = PRIMARY if retry else FALLBACK
-    assert sdk.models.models_called == [PRIMARY, expected_second]
-    assert [(a.model, a.status, a.error_class) for a in resp.attempts] == [
-        (PRIMARY, "retry" if retry else "fallback", kind),
-        (expected_second, "ok", None),
+    assert sdk.models.models_called == [PRIMARY, FALLBACK]
+    assert [(a.model, a.reason, a.status, a.error_class) for a in resp.attempts] == [
+        (PRIMARY, "primary", "fallback", kind),
+        (FALLBACK, "failover", "ok", None),
     ]
-    assert resp.model_id == expected_second
-    assert resp.fallback_used is (not retry)
+    assert resp.model_id == FALLBACK
+    assert resp.fallback_used is True
 
 
 @pytest.mark.parametrize(("first", "kind", "retry", "fallback"), TABLE, ids=[r[1] for r in TABLE])
@@ -287,22 +308,61 @@ def test_without_fallback_model(first: Any, kind: str, retry: bool, fallback: bo
         assert sdk.models.models_called == [PRIMARY]
 
 
-@pytest.mark.parametrize("exc", [RATE_MINUTE, SERVER_503, READ_TIMEOUT], ids=str)
+@pytest.mark.parametrize("exc", [RATE_MINUTE, SERVER_500, READ_TIMEOUT], ids=str)
 def test_same_model_retry_is_once_and_attempts_are_capped(exc: Any) -> None:
-    # Default budget 2: first attempt + one same-model retry; the fallback is never reached.
-    client, sdk, _ = make_client([exc, exc, ok_response()])
+    # No fallback: first attempt + one same-model retry, even with budget to spare.
+    client, sdk, _ = make_client([exc, exc, ok_response()], fallback_model=None, max_attempts=3)
     with pytest.raises(ProviderError) as info:
         client.generate(request())
     assert sdk.models.models_called == [PRIMARY, PRIMARY]
     assert [a.status for a in info.value.attempts] == ["retry", "failed"]
+    assert [a.reason for a in info.value.attempts] == ["primary", "retry"]
 
 
-def test_larger_budget_retries_once_then_falls_back() -> None:
-    client, sdk, _ = make_client([SERVER_503, SERVER_503, ok_response()], max_attempts=4)
+@pytest.mark.parametrize("exc", [RATE_MINUTE, SERVER_500, READ_TIMEOUT], ids=str)
+def test_transient_error_order_is_primary_fallback_then_same_model_retry(exc: Any) -> None:
+    client, sdk, _ = make_client([exc, exc, ok_response()], max_attempts=3)
     resp = client.generate(request())
-    assert sdk.models.models_called == [PRIMARY, PRIMARY, FALLBACK]
-    assert [a.status for a in resp.attempts] == ["retry", "fallback", "ok"]
+    assert sdk.models.models_called == [PRIMARY, FALLBACK, FALLBACK]
+    assert [(a.reason, a.status) for a in resp.attempts] == [
+        ("primary", "fallback"),
+        ("failover", "retry"),
+        ("retry", "ok"),
+    ]
     assert resp.fallback_used
+
+
+@pytest.mark.parametrize("exc", [SERVER_503, SERVER_504], ids=["503", "504"])
+def test_overload_goes_to_fallback_without_same_model_retry(exc: Any) -> None:
+    client, sdk, sleeps = make_client([exc, ok_response()], max_attempts=3)
+    resp = client.generate(request())
+    assert sdk.models.models_called == [PRIMARY, FALLBACK]
+    assert [(a.model, a.status, a.error_class) for a in resp.attempts] == [
+        (PRIMARY, "fallback", "overloaded"),
+        (FALLBACK, "ok", None),
+    ]
+    assert resp.model_id == FALLBACK and resp.fallback_used
+    assert sleeps == []  # failover never backs off
+
+
+@pytest.mark.parametrize("exc", [SERVER_503, SERVER_504], ids=["503", "504"])
+def test_overload_on_every_model_is_never_retried_on_the_same_model(exc: Any) -> None:
+    client, sdk, _ = make_client([exc, exc, ok_response()], max_attempts=3)
+    with pytest.raises(ProviderError) as info:
+        client.generate(request())
+    assert info.value.kind == "overloaded"
+    assert info.value.fallback_used is True
+    assert sdk.models.models_called == [PRIMARY, FALLBACK]
+    assert [a.status for a in info.value.attempts] == ["fallback", "failed"]
+
+
+def test_overload_without_fallback_fails_fast() -> None:
+    client, sdk, _ = make_client([SERVER_503, ok_response()], fallback_model=None, max_attempts=3)
+    with pytest.raises(ProviderError) as info:
+        client.generate(request())
+    assert info.value.kind == "overloaded"
+    assert info.value.fallback_used is False
+    assert sdk.models.models_called == [PRIMARY]
 
 
 def test_attempt_budget_is_per_semantic_call() -> None:
@@ -315,11 +375,16 @@ def test_attempt_budget_is_per_semantic_call() -> None:
 
 
 def test_backoff_is_short_and_jittered_only_for_rate_limit_and_5xx() -> None:
-    client, _, sleeps = make_client([RATE_MINUTE, ok_response()])
-    client.generate(request())
-    assert len(sleeps) == 1 and 0 < sleeps[0] <= MAX_BACKOFF_S
+    for exc in (RATE_MINUTE, SERVER_500):
+        client, _, sleeps = make_client([exc, ok_response()], fallback_model=None)
+        client.generate(request())
+        assert len(sleeps) == 1 and 0 < sleeps[0] <= MAX_BACKOFF_S
 
-    client, _, sleeps = make_client([READ_TIMEOUT, ok_response()])
+    client, _, sleeps = make_client([READ_TIMEOUT, ok_response()], fallback_model=None)
+    client.generate(request())
+    assert sleeps == []
+
+    client, _, sleeps = make_client([RATE_MINUTE, ok_response()])  # failover: no backoff
     client.generate(request())
     assert sleeps == []
 
@@ -330,6 +395,7 @@ def test_quota_daily_disables_the_model_for_the_rest_of_the_batch() -> None:
     later = client.generate(request())
     assert sdk.models.models_called == [PRIMARY, FALLBACK, FALLBACK]
     assert later.model_id == FALLBACK and later.fallback_used
+    assert [a.reason for a in later.attempts] == ["primary_disabled"]
 
 
 def test_quota_daily_on_every_model_fails_fast() -> None:
@@ -427,12 +493,48 @@ def _timing_out(seconds: float):
 
 
 def test_timeout_retry_when_deadline_allows_uses_remaining_time() -> None:
-    client, sdk, _ = make_client([_timing_out(20.0), ok_response()], timeout_s=20.0)
+    client, sdk, _ = make_client(
+        [_timing_out(20.0), ok_response()], timeout_s=20.0, fallback_model=None
+    )
     resp = client.generate(request(deadline=1000.0 + 32.0))
     assert [a.status for a in resp.attempts] == ["retry", "ok"]
     assert resp.attempts[0].latency_ms == 20000
     timeouts = [c["config"].http_options.timeout for c in sdk.models.calls]
     assert timeouts == [20000, 12000]  # second attempt capped by the remaining case time
+
+
+def test_failover_attempt_uses_remaining_time() -> None:
+    client, sdk, _ = make_client([_timing_out(20.0), ok_response()], timeout_s=20.0)
+    resp = client.generate(request(deadline=1000.0 + 32.0))
+    assert sdk.models.models_called == [PRIMARY, FALLBACK]
+    assert [a.status for a in resp.attempts] == ["fallback", "ok"]
+    timeouts = [c["config"].http_options.timeout for c in sdk.models.calls]
+    assert timeouts == [20000, 12000]
+
+
+def _overloaded_after(seconds: float):
+    def outcome(clock: Clock) -> BaseException:
+        clock.t += seconds
+        return SERVER_504
+
+    return outcome
+
+
+def test_overload_failover_respects_the_case_deadline() -> None:
+    # 504 after 10 s with 15 s left: 5 s remain, below the API minimum, so no fallback attempt.
+    client, sdk, _ = make_client([_overloaded_after(10.0), ok_response()], max_attempts=3)
+    with pytest.raises(ProviderError) as info:
+        client.generate(request(deadline=1000.0 + 15.0))
+    assert info.value.kind == "overloaded"
+    assert [a.status for a in info.value.attempts] == ["failed"]
+    assert sdk.models.models_called == [PRIMARY]
+
+    # 25 s budget: the fallback gets the remaining 15 s, capped at the 10 s attempt timeout.
+    client, sdk, _ = make_client([_overloaded_after(10.0), ok_response()], max_attempts=3)
+    resp = client.generate(request(deadline=1000.0 + 25.0))
+    assert sdk.models.models_called == [PRIMARY, FALLBACK]
+    assert [c["config"].http_options.timeout for c in sdk.models.calls] == [10000, 10000]
+    assert resp.model_id == FALLBACK
 
 
 def test_timeout_not_retried_when_deadline_does_not_allow() -> None:
@@ -449,7 +551,7 @@ def test_remaining_time_below_api_minimum_makes_no_transport_call() -> None:
     with pytest.raises(ProviderError) as info:
         client.generate(request(deadline=1000.0 + 15.0))  # 5 s left: too short for the API
     assert info.value.kind == "timeout"
-    assert [a.status for a in info.value.attempts] == ["retry", "failed"]
+    assert [a.status for a in info.value.attempts] == ["failed"]  # no second attempt started
     assert len(sdk.models.calls) == 1
 
 
@@ -470,6 +572,145 @@ def test_expired_deadline_makes_no_attempt() -> None:
         client.generate(request(deadline=1000.0))
     assert info.value.kind == "timeout"
     assert sdk.models.calls == []
+
+
+# --- primary health breaker (batch-scoped cooldown) -------------------------------------------
+
+
+def _engage_cooldown(client: GeminiClient) -> None:
+    for _ in range(PRIMARY_BREAKER_THRESHOLD):
+        client.generate(request())  # primary fails, the fallback answers
+    assert client.runner.cooldown_left == PRIMARY_COOLDOWN_CALLS
+
+
+def _outcomes(first_failures: list[Any], n_ok: int) -> list[Any]:
+    out: list[Any] = []
+    for exc in first_failures:
+        out += [exc, ok_response()]
+    return out + [ok_response() for _ in range(n_ok)]
+
+
+@pytest.mark.parametrize("exc", [SERVER_503, SERVER_504, READ_TIMEOUT], ids=str)
+def test_cooldown_engages_after_consecutive_primary_overloads(exc: Any) -> None:
+    client, sdk, _ = make_client(_outcomes([exc, exc], 1))
+    _engage_cooldown(client)
+    resp = client.generate(request())
+    assert sdk.models.models_called[-1] == FALLBACK
+    assert [(a.model, a.reason) for a in resp.attempts] == [(FALLBACK, "primary_cooldown")]
+    assert resp.fallback_used and resp.model_id == FALLBACK
+    assert client.runner.cooldowns_started == 1
+
+
+def test_cooldown_needs_consecutive_failures() -> None:
+    outcomes = [SERVER_503, ok_response(), ok_response(), SERVER_503, ok_response(), ok_response()]
+    client, sdk, _ = make_client(outcomes)
+    for _ in range(3):
+        client.generate(request())  # overload, success on the primary, overload
+    assert client.runner.cooldown_left == 0
+    assert client.generate(request()).attempts[0].model == PRIMARY
+
+
+def test_other_errors_do_not_engage_the_cooldown() -> None:
+    client, _, _ = make_client(_outcomes([SERVER_500, RATE_MINUTE, SERVER_500], 1))
+    for _ in range(3):
+        client.generate(request())
+    assert client.runner.cooldown_left == 0 and client.runner.cooldowns_started == 0
+
+
+def test_cooldown_releases_after_the_window_and_probes_the_primary() -> None:
+    client, sdk, _ = make_client(_outcomes([SERVER_503, SERVER_503], PRIMARY_COOLDOWN_CALLS + 2))
+    _engage_cooldown(client)
+    for _ in range(PRIMARY_COOLDOWN_CALLS):
+        resp = client.generate(request())
+        assert [(a.model, a.reason) for a in resp.attempts] == [(FALLBACK, "primary_cooldown")]
+    probe = client.generate(request())
+    assert [(a.model, a.reason, a.status) for a in probe.attempts] == [
+        (PRIMARY, "primary_probe", "ok")
+    ]
+    assert not probe.fallback_used
+    after = client.generate(request())
+    assert [(a.model, a.reason) for a in after.attempts] == [(PRIMARY, "primary")]
+    assert client.runner.cooldowns_started == 1
+
+
+def test_failed_probe_reopens_the_cooldown_at_once() -> None:
+    client, sdk, _ = make_client(_outcomes([SERVER_503, SERVER_503], PRIMARY_COOLDOWN_CALLS))
+    _engage_cooldown(client)
+    for _ in range(PRIMARY_COOLDOWN_CALLS):
+        client.generate(request())
+    sdk.models.outcomes = [SERVER_503, ok_response(), ok_response()]
+    probe = client.generate(request())
+    assert [(a.model, a.reason, a.status) for a in probe.attempts] == [
+        (PRIMARY, "primary_probe", "fallback"),
+        (FALLBACK, "failover", "ok"),
+    ]
+    assert client.runner.cooldown_left == PRIMARY_COOLDOWN_CALLS
+    assert client.runner.cooldowns_started == 2
+    assert client.generate(request()).attempts[0].reason == "primary_cooldown"
+
+
+def test_cooldown_keeps_the_primary_as_second_choice() -> None:
+    client, sdk, _ = make_client(
+        _outcomes([SERVER_503, SERVER_503], 0) + [SERVER_503, ok_response()]
+    )
+    _engage_cooldown(client)
+    resp = client.generate(request())
+    assert sdk.models.models_called[-2:] == [FALLBACK, PRIMARY]
+    assert [(a.model, a.reason, a.status) for a in resp.attempts] == [
+        (FALLBACK, "primary_cooldown", "fallback"),
+        (PRIMARY, "failover", "ok"),
+    ]
+    assert resp.fallback_used and resp.model_id == PRIMARY
+
+
+def test_cooldown_never_switches_credential() -> None:
+    client, sdk, _ = make_client(_outcomes([SERVER_503, SERVER_503], 1))
+    sdk_client = client._client
+    _engage_cooldown(client)
+    client.generate(request())
+    assert client._client is sdk_client  # one SDK client (one key) for the whole batch
+    normal, cooled = sdk.models.calls[0], sdk.models.calls[-1]
+    assert (normal["model"], cooled["model"]) == (PRIMARY, FALLBACK)
+    assert normal["config"].model_dump() == cooled["config"].model_dump()  # only the model differs
+
+    real = GeminiClient(settings())  # the key is bound once, at construction
+    real.runner.cooldown_left = PRIMARY_COOLDOWN_CALLS
+    assert real._client._api_client.api_key == KEY
+
+
+def test_no_cooldown_without_a_fallback_model() -> None:
+    client, sdk, _ = make_client(
+        [SERVER_503, SERVER_503, SERVER_503, ok_response()], fallback_model=None
+    )
+    for _ in range(3):
+        with pytest.raises(ProviderError):
+            client.generate(request())
+    assert client.runner.cooldown_left == 0
+    assert client.generate(request()).attempts[0].reason == "primary"
+    assert set(sdk.models.models_called) == {PRIMARY}
+
+
+def test_auth_billing_during_cooldown_latches_without_trying_the_primary() -> None:
+    client, sdk, sleeps = make_client(
+        _outcomes([SERVER_503, SERVER_503], 0) + [BAD_KEY], max_attempts=3
+    )
+    _engage_cooldown(client)
+    with pytest.raises(AuthBillingError) as info:
+        client.generate(request())
+    assert [(a.model, a.status) for a in info.value.attempts] == [(FALLBACK, "failed")]
+    with pytest.raises(AuthBillingError) as again:
+        client.generate(request())
+    assert again.value.attempts == ()
+    assert sdk.models.models_called[-1] == FALLBACK and len(sdk.models.calls) == 5
+    assert sleeps == []
+
+
+def test_breaker_state_is_per_client_instance() -> None:
+    first, _, _ = make_client(_outcomes([SERVER_503, SERVER_503], 0))
+    _engage_cooldown(first)
+    second, sdk, _ = make_client([ok_response()])
+    assert second.runner.cooldown_left == 0
+    assert second.generate(request()).attempts[0].model == PRIMARY
 
 
 # --- request configuration -------------------------------------------------------------------

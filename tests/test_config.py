@@ -28,7 +28,7 @@ def test_defaults_match_architecture():
     assert s.fallback_model == "gemini-3.1-flash-lite"
     assert s.thinking_level == "minimal"
     assert s.timeout_s == 10.0
-    assert s.max_attempts == 2
+    assert s.max_attempts == 3
     assert s.case_deadline_s == 30.0
     assert s.max_output_tokens == 600
     assert s.input_char_cap == 2000

@@ -250,6 +250,32 @@ def test_semantic_calls_respect_attempt_cap(resources, statics):
     assert [a["status"] for a in result.trace.llm_calls[0].attempts] == ["retry", "ok"]
 
 
+def test_attempts_trace_the_model_choice_reason(resources, statics):
+    llm = FakeLLM(
+        [{"error": "overloaded"}, _final("Pay in 4 splits a purchase.")],
+        fallback_model="fake-fallback",
+    )
+    case = Case(id="r1", user_id="u002", question="How does pay in 4 work?")
+    result = answer_case(resources, llm, case, statics=statics)
+    assert result.trace.llm_calls[0].attempts == (
+        {
+            "model": "fake-primary",
+            "reason": "primary",
+            "status": "fallback",
+            "error_class": "overloaded",
+            "latency_ms": result.trace.llm_calls[0].attempts[0]["latency_ms"],
+        },
+        {
+            "model": "fake-fallback",
+            "reason": "failover",
+            "status": "ok",
+            "error_class": None,
+            "latency_ms": result.trace.llm_calls[0].attempts[1]["latency_ms"],
+        },
+    )
+    assert result.trace.model == "fake-fallback" and result.trace.fallback_used is True
+
+
 # --- tripwire wiring -----------------------------------------------------------------------
 
 
