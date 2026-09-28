@@ -281,3 +281,117 @@ def test_escalation_coherence_requires_a_handoff(validator, repo):
     forced = _ctx(repo, forced_reason="hardship")
     assert _run(validator, forced, no_handoff).verdict_of("escalation_coherence") == "fail"
     assert _run(validator, _ctx(repo), no_handoff).verdict_of("escalation_coherence") == "pass"
+
+
+# --- R-01 regressions: validator false negatives / false positive ---------------------------
+
+
+def test_fraud_mode_blocks_a_merchant_the_shopper_typed(validator, repo):
+    """SEC-11: no caller merchant in a fraud answer, even one named in the question (R-01 #1)."""
+    merchant = repo.orders_for(CALLER)[0].merchant
+    message = f"I didn't authorize this order from {merchant}"
+    ctx = _ctx(repo, message, fraud_mode=True, forced_reason="fraud")
+    leak = f"Your {merchant} order is being escalated to a support specialist."
+    assert _run(validator, ctx, leak, reason="fraud").verdict_of("order_id") == "fail"
+    safe = "I'm escalating this to a support specialist who will review the unauthorized charge."
+    result = _run(validator, ctx, safe, reason="fraud")
+    assert result.ok, result.to_trace()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"{OTHER_USERS_ORDER} exists on another shopper's account.",
+        f"{OTHER_USERS_ORDER} is active.",
+        f"{OTHER_USERS_ORDER} belongs to another account.",
+        f"I couldn't find {OTHER_USERS_ORDER} on your account, but it exists elsewhere.",
+        f"I couldn't find {OTHER_USERS_ORDER} on your account; {OTHER_USERS_ORDER} is active.",
+    ],
+)
+def test_typed_not_found_id_outside_a_not_found_statement_fails(validator, repo, text):
+    """The echo exception needs a not-found construction; existence/ownership/status fail
+    (security §4, R-01 #2)."""
+    tool_result = _tool(repo, order_id=OTHER_USERS_ORDER)
+    assert tool_result["status"] == "not_found"
+    ctx = _ctx(repo, f"What's the status of {OTHER_USERS_ORDER}?", tool_result=tool_result)
+    assert _run(validator, ctx, text).verdict_of("order_id") == "fail", text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"I couldn't find {OTHER_USERS_ORDER} on your account.",
+        f"{OTHER_USERS_ORDER} doesn't appear on your account.",
+        f"There is no order {OTHER_USERS_ORDER} on your account. Please double-check the ID.",
+        f"I wasn't able to locate order {OTHER_USERS_ORDER} in your orders.",
+    ],
+)
+def test_typed_not_found_id_inside_a_not_found_statement_warns(validator, repo, text):
+    tool_result = _tool(repo, order_id=OTHER_USERS_ORDER)
+    ctx = _ctx(repo, f"What's the status of {OTHER_USERS_ORDER}?", tool_result=tool_result)
+    result = _run(validator, ctx, text)
+    assert result.verdict_of("order_id") == "warn", result.to_trace()
+    assert result.ok
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "No human or specialist is needed; I will not escalate this.",
+        "No specialist is needed.",
+        "I will not escalate this.",
+        "Do not escalate.",
+        "An agent is not needed.",
+        "There's no need for a specialist to review it.",
+    ],
+)
+def test_escalation_coherence_rejects_negated_handoffs(validator, repo, text):
+    """A hand-off must be affirmative; negated forms contradict the escalation (R-01 #3)."""
+    result = _run(validator, _ctx(repo), text, reason="fraud")
+    assert result.verdict_of("escalation_coherence") == "fail", text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I'm passing this to our support team for review.",
+        "A specialist will review your case.",
+        "I've escalated this to our fraud team.",
+        "I'm connecting you with a specialist.",
+        "I can't waive this fee, but a support specialist can review it.",
+        "Our support team will contact you shortly.",
+    ],
+)
+def test_escalation_coherence_accepts_affirmative_handoffs(validator, repo, text):
+    result = _run(validator, _ctx(repo), text, reason="fraud")
+    assert result.verdict_of("escalation_coherence") == "pass", text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I opened the policy page to explain the dispute timeline.",
+        "I moved the details into a list for you.",
+        "I've opened your account settings page to check.",
+    ],
+)
+def test_harmless_uses_of_ambiguous_action_verbs_pass(validator, repo, text):
+    """Ambiguous verbs fail only with an account object (R-01 #6)."""
+    result = _run(validator, _ctx(repo), text)
+    assert result.verdict_of("action_claim") == "pass", result.to_trace()
+    assert result.ok
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I opened a dispute for your order.",
+        "I removed the late fee.",
+        "I increased your limit.",
+        "I opened your case.",
+        "I've rescheduled your payment.",
+        "We credited the refund yesterday.",
+    ],
+)
+def test_account_actions_with_ambiguous_or_direct_verbs_fail(validator, repo, text):
+    assert _run(validator, _ctx(repo), text).verdict_of("action_claim") == "fail", text
