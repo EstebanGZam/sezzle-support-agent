@@ -13,7 +13,6 @@ Required by the brief: "the prompts you used to build (including scaffolding ask
 | P-003 | Evidence-based stack comparison; owner keeps decision authority | lead | `docs/planning/prompts/P-003-stack-comparison-prompt.md` | `docs/planning/STACK_DECISION_MATRIX.md`; independent Codex review changed 6 recommendations | Owner approved direction (P-004) |
 | P-004 | Owner-approved technical direction + authorization of the SDD preparation phase | lead | `docs/planning/prompts/P-004-owner-approved-direction.md` | This repository's specs, ADR drafts, eval design, prompts, checklist | Owner decisions (P-005) |
 | P-005 | Owner decisions: model config, architecture approval, AR reconciliation, Gemini credential-provenance investigation, remote-repo gate | lead | `docs/planning/prompts/P-005-owner-final-preparation-decisions.md` | Credential investigation (`docs/reviews/credential-provenance-2026-09-27.md`); A-10 revised (original preserved); OD-15…OD-23; AR statuses; final readiness checklist | Implementation authorized (P-006) |
-
 | P-006 | Implementation authorization (IP-01 + E-01 onward), execution methodology, credential and publication boundaries | lead | `docs/planning/prompts/P-006-implementation-authorization.md` | Implementation started; real LLM runs gated on owner confirmation of the credential project's data-handling terms | — |
 | P-007 | Billing confirmation (paid tier, prepaid) and authorization of the first real evaluation | lead | `docs/planning/prompts/P-007-billing-confirmation.md` | A-10 resolved; baseline run 001 unblocked | — |
 
