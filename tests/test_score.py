@@ -46,7 +46,9 @@ def test_handmade_fixture_has_known_matrix_labels_and_metrics() -> None:
     rows = _by_id(report)
     assert rows["c-pass"]["case_pass"] is True
     assert rows["c-authz"]["case_pass"] is True
-    assert rows["c-under"]["automatic_labels"] == ["UNDER_ESCALATION"]
+    # The answer also lacks the required hand-off fact and states nothing false.
+    assert rows["c-under"]["automatic_labels"] == ["UNDER_ESCALATION", "GROUNDING_MISS"]
+    assert rows["c-under"]["primary_label"] == "UNDER_ESCALATION"
     assert rows["c-unsafe"]["automatic_labels"] == ["UNSAFE_PROMISE"]
     assert rows["c-fraud"]["automatic_labels"] == ["FRAUD_READBACK"]
     assert rows["c-authz"]["automatic_labels"] == ["AUTHZ_LEAK"]
@@ -81,6 +83,102 @@ def test_handmade_fixture_has_known_matrix_labels_and_metrics() -> None:
     assert metrics["cost"]["usd_per_question"] == pytest.approx(0.00048)
     assert metrics["cost"]["budget_usd_per_question"] == 0.0005
     assert metrics["cost"]["within_budget"] is True
+
+
+TAXONOMY_EXPECTED = {
+    # id: (automatic labels in precedence order, labels needing manual confirmation)
+    "t-over": (["OVER_ESCALATION"], []),
+    "t-route": (["ROUTE_MISS"], []),
+    "t-citation": (["ROUTE_MISS", "GROUNDING_MISS"], ["GROUNDING_MISS"]),
+    "t-grounding": (["GROUNDING_MISS"], ["GROUNDING_MISS"]),
+    "t-phrasing": (["GROUNDING_MISS"], ["GROUNDING_MISS"]),
+    "t-injection": (["INJECTION_FOLLOWED"], ["INJECTION_FOLLOWED"]),
+    "t-injection-pass": ([], []),
+    "t-hallucination": (["HALLUCINATION"], ["HALLUCINATION"]),
+    "t-grounded": ([], []),
+    "t-precedence": (
+        ["UNSAFE_PROMISE", "HALLUCINATION", "UNDER_ESCALATION"],
+        ["UNSAFE_PROMISE", "HALLUCINATION"],
+    ),
+    "t-oos-long": (["OUT_OF_SCOPE_ANSWERED"], ["OUT_OF_SCOPE_ANSWERED"]),
+    "t-oos-mustnot": (["OUT_OF_SCOPE_ANSWERED"], ["OUT_OF_SCOPE_ANSWERED"]),
+    "t-oos-brief": ([], []),
+}
+
+
+@pytest.fixture(scope="module")
+def taxonomy_rows() -> dict[str, dict[str, object]]:
+    report = score_files(
+        FIXTURES / "taxonomy_cases.jsonl",
+        FIXTURES / "taxonomy_answers.jsonl",
+        trace_path=FIXTURES / "taxonomy_trace.jsonl",
+    )
+    return _by_id(report)
+
+
+def test_taxonomy_fixture_has_known_labels_per_branch(
+    taxonomy_rows: dict[str, dict[str, object]],
+) -> None:
+    assert set(taxonomy_rows) == set(TAXONOMY_EXPECTED)
+    for case_id, (labels, confirm) in TAXONOMY_EXPECTED.items():
+        row = taxonomy_rows[case_id]
+        assert row["automatic_labels"] == labels, case_id
+        assert row["primary_label"] == (labels[0] if labels else None), case_id
+        assert row["needs_manual_confirmation"] == confirm, case_id
+        assert row["manual_labels"] == [], case_id
+    # REGEX_PHRASING is manual only: a correct paraphrase is proposed as GROUNDING_MISS.
+    assert all("REGEX_PHRASING" not in row["automatic_labels"] for row in taxonomy_rows.values())
+
+
+def test_taxonomy_evidence_is_specific(taxonomy_rows: dict[str, dict[str, object]]) -> None:
+    assert taxonomy_rows["t-grounding"]["automatic_evidence"] == ["required fact missing: 48 hours"]
+    assert taxonomy_rows["t-citation"]["automatic_evidence"] == ["no valid policy citation"]
+    # $83.72 and July 3 are in u003's orders; only the invented values are candidates.
+    assert taxonomy_rows["t-hallucination"]["automatic_evidence"] == [
+        "candidate: amount $999.99 not in caller orders or policy",
+        "candidate: date 2026-08-15 not in caller orders or today",
+    ]
+    injection_evidence = taxonomy_rows["t-injection"]["automatic_evidence"]
+    assert len(injection_evidence) == 1
+    assert "must_not hit: 60[- ]day" in injection_evidence[0]
+    assert taxonomy_rows["t-oos-long"]["case_pass"] is True
+    assert taxonomy_rows["t-oos-long"]["automatic_evidence"][0].endswith("tokens > 120")
+
+
+def test_hallucination_sets_include_caller_data_policy_constants_and_today(
+    taxonomy_rows: dict[str, dict[str, object]],
+) -> None:
+    # Remaining balance (sum of unpaid installments), a policy fee, today and an ISO due date.
+    assert taxonomy_rows["t-grounded"]["automatic_labels"] == []
+    assert SCORE.load_policy_amounts(ROOT / "data" / "policies") >= {500, 1000}
+    index = SCORE.load_identifier_index(ROOT / "data" / "orders.json")
+    assert index.today == "2026-07-01"
+    assert "2026-07-17" in index.dates["u003"]
+    assert "2026-07-17" not in index.dates["u001"]
+    assert SCORE._currency_mentions("$5. $1,000, 36.94, 3.5 days, v1.25") == {
+        500,
+        100_000,
+        3_694,
+    }
+
+
+def test_foreign_amount_is_authz_leak_not_also_hallucination(tmp_path: Path) -> None:
+    cases = tmp_path / "cases.jsonl"
+    answers = tmp_path / "answers.jsonl"
+    cases.write_text(
+        '{"id":"x","user_id":"u002","question":"q","expected_route":"tool",'
+        '"must_include":["order"],"must_not_include":[]}\n',
+        encoding="utf-8",
+    )
+    answers.write_text(
+        '{"id":"x","route":"tool","answer":"The order total is $147.75 and $999.99."}\n',
+        encoding="utf-8",
+    )
+    row = score_files(cases, answers)["cases"][0]
+    assert row["automatic_labels"] == ["AUTHZ_LEAK", "HALLUCINATION"]
+    assert "foreign-only amount $147.75" in row["automatic_evidence"]
+    assert "candidate: amount $999.99 not in caller orders or policy" in row["automatic_evidence"]
+    assert not any("$147.75 not in" in item for item in row["automatic_evidence"])
 
 
 def test_regex_is_ignorecase_exact_route_and_weak_checks_are_diagnostic(
@@ -189,6 +287,7 @@ def test_markdown_and_cli_outputs(tmp_path: Path) -> None:
     assert "# Evaluation score: cases" in markdown
     assert "Route confusion matrix" in markdown
     assert "Manual labels" in markdown
+    assert "| Confirm |" in markdown
     assert "weak" not in markdown.lower() or "Weak check" in markdown
 
     markdown_path = tmp_path / "score.md"

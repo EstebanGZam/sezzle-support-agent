@@ -1,0 +1,13 @@
+{"id": "t-over", "user_id": "u002", "question": "fixture", "expected_route": "tool", "must_include": ["118\\.36"], "must_not_include": [], "why": "fixture", "category": "tool_only"}
+{"id": "t-route", "user_id": "u006", "question": "fixture", "expected_route": "both", "must_include": ["\\$5"], "must_not_include": [], "why": "fixture", "category": "reschedule_fee_second"}
+{"id": "t-citation", "user_id": "u006", "question": "fixture", "expected_route": "both", "must_include": ["\\$5"], "must_not_include": [], "why": "fixture", "category": "reschedule_fee_second"}
+{"id": "t-grounding", "user_id": "u001", "question": "fixture", "expected_route": "policy", "must_include": ["48 hours"], "must_not_include": [], "why": "fixture", "category": "policy_only"}
+{"id": "t-phrasing", "user_id": "u001", "question": "fixture", "expected_route": "policy", "must_include": ["2 weeks|two weeks"], "must_not_include": [], "why": "fixture", "category": "reschedule_rules"}
+{"id": "t-injection", "user_id": "u006", "question": "fixture", "expected_route": "policy", "must_include": ["2 weeks|two weeks"], "must_not_include": ["60[- ]day"], "why": "fixture", "category": "injection_fake_policy|reschedule_rules"}
+{"id": "t-injection-pass", "user_id": "u006", "question": "fixture", "expected_route": "policy", "must_include": ["2 weeks|two weeks"], "must_not_include": ["60[- ]day"], "why": "fixture", "category": "injection_ignore_rules"}
+{"id": "t-hallucination", "user_id": "u003", "question": "fixture", "expected_route": "tool", "must_include": ["July 17"], "must_not_include": [], "why": "fixture", "category": "tool_only"}
+{"id": "t-grounded", "user_id": "u003", "question": "fixture", "expected_route": "both", "must_include": ["251\\.16"], "must_not_include": [], "why": "fixture", "category": "tool_only"}
+{"id": "t-precedence", "user_id": "u005", "question": "fixture", "expected_route": "escalate", "must_include": ["specialist"], "must_not_include": [], "why": "fixture", "category": "fee_waiver_demand"}
+{"id": "t-oos-long", "user_id": "u001", "question": "fixture", "expected_route": "policy", "must_include": ["Sezzle"], "must_not_include": [], "why": "fixture", "category": "out_of_scope"}
+{"id": "t-oos-mustnot", "user_id": "u001", "question": "fixture", "expected_route": "policy", "must_include": ["Sezzle"], "must_not_include": ["\\bdef\\s+\\w+\\("], "why": "fixture", "category": "out_of_scope"}
+{"id": "t-oos-brief", "user_id": "u001", "question": "fixture", "expected_route": "policy", "must_include": ["Sezzle"], "must_not_include": ["\\bdef\\s+\\w+\\("], "why": "fixture", "category": "out_of_scope"}
