@@ -1,0 +1,381 @@
+{
+ "runs": [
+  {
+   "model": "gemini-3.5-flash-lite",
+   "t1": {
+    "http": 200,
+    "ms": 1561,
+    "usage": {
+     "promptTokenCount": 125,
+     "candidatesTokenCount": 24,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": 149
+    },
+    "error": null,
+    "function_call": {
+     "name": "get_my_orders",
+     "args": {
+      "order_id": "X-100"
+     },
+     "id": "call_730908"
+    },
+    "has_thought_signature": true
+   },
+   "t2": {
+    "http": 200,
+    "ms": 1111,
+    "usage": {
+     "promptTokenCount": 208,
+     "candidatesTokenCount": 80,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": 288
+    },
+    "error": null,
+    "json_valid": true,
+    "route": "both",
+    "grounded_date": true,
+    "answer": "Your next payment on order X-100 is due on 2030-01-15. Yes, you can move it for free because your first reschedule is free."
+   }
+  },
+  {
+   "model": "gemini-3.5-flash-lite",
+   "t1": {
+    "http": 200,
+    "ms": 1156,
+    "usage": {
+     "promptTokenCount": 125,
+     "candidatesTokenCount": 24,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": 149
+    },
+    "error": null,
+    "function_call": {
+     "name": "get_my_orders",
+     "args": {
+      "order_id": "X-100"
+     },
+     "id": "call_298225"
+    },
+    "has_thought_signature": true
+   },
+   "t2": {
+    "http": 200,
+    "ms": 843,
+    "usage": {
+     "promptTokenCount": 208,
+     "candidatesTokenCount": 71,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": 279
+    },
+    "error": null,
+    "json_valid": true,
+    "route": "tool",
+    "grounded_date": true,
+    "answer": "Your next payment on order X-100 is due on 2030-01-15. Yes, you can move it for free since you have not used any reschedules yet."
+   }
+  },
+  {
+   "model": "gemini-3.5-flash-lite",
+   "t1": {
+    "http": 200,
+    "ms": 1306,
+    "usage": {
+     "promptTokenCount": 125,
+     "candidatesTokenCount": 24,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": 149
+    },
+    "error": null,
+    "function_call": {
+     "name": "get_my_orders",
+     "args": {
+      "order_id": "X-100"
+     },
+     "id": "call_1125176"
+    },
+    "has_thought_signature": true
+   },
+   "t2": {
+    "http": 200,
+    "ms": 1434,
+    "usage": {
+     "promptTokenCount": 208,
+     "candidatesTokenCount": 80,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": 288
+    },
+    "error": null,
+    "json_valid": true,
+    "route": "both",
+    "grounded_date": true,
+    "answer": "Your next payment on order X-100 is due on 2030-01-15. Yes, you can move it for free because your first reschedule is free."
+   }
+  },
+  {
+   "model": "gemini-3.1-flash-lite",
+   "t1": {
+    "http": 200,
+    "ms": 1230,
+    "usage": {
+     "promptTokenCount": 125,
+     "candidatesTokenCount": 24,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": 149
+    },
+    "error": null,
+    "function_call": {
+     "name": "get_my_orders",
+     "args": {
+      "order_id": "X-100"
+     },
+     "id": "call_936197"
+    },
+    "has_thought_signature": true
+   },
+   "t2": {
+    "http": 200,
+    "ms": 2537,
+    "usage": {
+     "promptTokenCount": 208,
+     "candidatesTokenCount": 67,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": 275
+    },
+    "error": null,
+    "json_valid": true,
+    "route": "both",
+    "grounded_date": true,
+    "answer": "Your next payment for order X-100 is due on January 15, 2030. Since you have not used any reschedules yet, you are eligible to move this payment for free."
+   }
+  },
+  {
+   "model": "gemini-3.1-flash-lite",
+   "t1": {
+    "http": 200,
+    "ms": 1251,
+    "usage": {
+     "promptTokenCount": 125,
+     "candidatesTokenCount": 24,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": 149
+    },
+    "error": null,
+    "function_call": {
+     "name": "get_my_orders",
+     "args": {
+      "order_id": "X-100"
+     },
+     "id": "call_1381824"
+    },
+    "has_thought_signature": true
+   },
+   "t2": {
+    "http": 200,
+    "ms": 1715,
+    "usage": {
+     "promptTokenCount": 208,
+     "candidatesTokenCount": 82,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": 290
+    },
+    "error": null,
+    "json_valid": true,
+    "route": "both",
+    "grounded_date": true,
+    "answer": "Your next payment for order X-100 is due on January 15, 2030. Since you have not used any reschedules yet, you are eligible to move this payment for free according to our policy."
+   }
+  },
+  {
+   "model": "gemini-3.1-flash-lite",
+   "t1": {
+    "http": 200,
+    "ms": 1229,
+    "usage": {
+     "promptTokenCount": 125,
+     "candidatesTokenCount": 24,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": 149
+    },
+    "error": null,
+    "function_call": {
+     "name": "get_my_orders",
+     "args": {
+      "order_id": "X-100"
+     },
+     "id": "call_929094"
+    },
+    "has_thought_signature": true
+   },
+   "t2": {
+    "http": 200,
+    "ms": 1814,
+    "usage": {
+     "promptTokenCount": 208,
+     "candidatesTokenCount": 77,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": 285
+    },
+    "error": null,
+    "json_valid": true,
+    "route": "both",
+    "grounded_date": true,
+    "answer": "Your next payment for order X-100 is due on 2030-01-15. Yes, you can reschedule this payment for free because you have not used your first free reschedule yet."
+   }
+  },
+  {
+   "model": "gemini-2.5-flash-lite",
+   "t1": {
+    "http": 200,
+    "ms": 613,
+    "usage": {
+     "promptTokenCount": 132,
+     "candidatesTokenCount": 23,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": 155
+    },
+    "error": null,
+    "function_call": {
+     "name": "get_my_orders",
+     "args": {
+      "order_id": "X-100"
+     }
+    },
+    "has_thought_signature": false
+   },
+   "t2": {
+    "http": 400,
+    "ms": 293,
+    "usage": {
+     "promptTokenCount": null,
+     "candidatesTokenCount": null,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": null
+    },
+    "error": {
+     "status": "INVALID_ARGUMENT",
+     "message": "Function calling with a response mime type: 'application/json' is unsupported"
+    }
+   }
+  },
+  {
+   "model": "gemini-2.5-flash-lite",
+   "t1": {
+    "http": 200,
+    "ms": 503,
+    "usage": {
+     "promptTokenCount": 132,
+     "candidatesTokenCount": 23,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": 155
+    },
+    "error": null,
+    "function_call": {
+     "name": "get_my_orders",
+     "args": {
+      "order_id": "X-100"
+     }
+    },
+    "has_thought_signature": false
+   },
+   "t2": {
+    "http": 400,
+    "ms": 739,
+    "usage": {
+     "promptTokenCount": null,
+     "candidatesTokenCount": null,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": null
+    },
+    "error": {
+     "status": "INVALID_ARGUMENT",
+     "message": "Function calling with a response mime type: 'application/json' is unsupported"
+    }
+   }
+  },
+  {
+   "model": "gemini-2.5-flash-lite",
+   "t1": {
+    "http": 200,
+    "ms": 921,
+    "usage": {
+     "promptTokenCount": 132,
+     "candidatesTokenCount": 23,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": 155
+    },
+    "error": null,
+    "function_call": {
+     "name": "get_my_orders",
+     "args": {
+      "order_id": "X-100"
+     }
+    },
+    "has_thought_signature": false
+   },
+   "t2": {
+    "http": 400,
+    "ms": 308,
+    "usage": {
+     "promptTokenCount": null,
+     "candidatesTokenCount": null,
+     "thoughtsTokenCount": null,
+     "cachedContentTokenCount": null,
+     "totalTokenCount": null
+    },
+    "error": {
+     "status": "INVALID_ARGUMENT",
+     "message": "Function calling with a response mime type: 'application/json' is unsupported"
+    }
+   }
+  }
+ ],
+ "cache": [
+  {
+   "model": "gemini-3.5-flash-lite",
+   "http": 429,
+   "ms": 818,
+   "error": {
+    "status": "RESOURCE_EXHAUSTED",
+    "message": "TotalCachedContentStorageTokensPerModelFreeTier limit exceeded for model gemini-3.5-flash-lite: limit=0, requested=4181"
+   },
+   "cached_tokens": null
+  },
+  {
+   "model": "gemini-3.1-flash-lite",
+   "http": 429,
+   "ms": 874,
+   "error": {
+    "status": "RESOURCE_EXHAUSTED",
+    "message": "TotalCachedContentStorageTokensPerModelFreeTier limit exceeded for model gemini-3.1-flash-lite: limit=0, requested=4181"
+   },
+   "cached_tokens": null
+  },
+  {
+   "model": "gemini-2.5-flash-lite",
+   "http": 429,
+   "ms": 409,
+   "error": {
+    "status": "RESOURCE_EXHAUSTED",
+    "message": "TotalCachedContentStorageTokensPerModelFreeTier limit exceeded for model gemini-2.5-flash-lite: limit=0, requested=4181"
+   },
+   "cached_tokens": null
+  }
+ ]
+}

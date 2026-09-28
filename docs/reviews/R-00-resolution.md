@@ -1,0 +1,19 @@
+# R-00 — Resolution of the spec-package review findings
+
+Reviewer: Codex (A-011), independent of the spec author (lead, Claude). Fixes were applied by the lead to lead-owned files and by the evaluation agent (A-012) to evaluation-owned files. No finding was silently dismissed.
+
+| # | Severity | Finding (short) | Resolution | Where |
+|---|---|---|---|---|
+| 1 | BLOCKER | Primary model undecided, so config is ambiguous | `GEMINI_PRIMARY_MODEL` now has **no default** and is required for `gemini` (exit 2 if missing). The model choice is recorded as pending owner decision **OD-15**, which blocks IP-01. | architecture §8, `.env.example`, decision-log OD-15, readiness §D.1, IP-01 |
+| 2 | MAJOR | Agent recommendations presented as owner-approved | Detailed designs are marked `[AR-nn]` **PROPOSED**. The decision log now lists AR-01…AR-08 as pending owner approval of the bundle. | architecture intro, decision-log |
+| 3 | MAJOR | SEZ requirements containing inferred choices | SEZ-C02 is reduced to the official core. Blank/malformed-line handling → **OWN-14**; batch continuation → **OWN-15**; measured ADR numbers → **OWN-16**. Level expectations added as **SEZ-L01..L03**. SEC-01..03 sources corrected. | requirements |
+| 4 | MAJOR | Incomplete traceability | SEZ-F04/F05 mapped to T-06/T-09/T-10/T-13/T-14. Every SEZ ID is mapped in the traceability matrix. Verify columns now name eval categories/labels. | tasks, requirements |
+| 5 | MAJOR | Citation-based route is fragile | New `policy_applied` boolean with a precise definition; route = escalate > (tool executed ? (policy_applied ? both : tool)) : policy. Unit tests cover all 4 routes. | architecture §3.3, §6 |
+| 6 | MAJOR | Validator false positives/negatives | Redesigned as typed claims with pass/warn/fail: echoed user-typed not-found ID → warn; dates → warn only; broader action/commitment patterns with negation and recorded-state exemptions; required must-pass/must-fail fixtures. Residual risk (a wrong policy constant) is stated honestly. | security §4, ADR-1 |
+| 7 | MAJOR | Hostile-input controls not structural enough | Tripwire extended (AR-07) with `human_only_action` (explicit requests to waive/override/disclose limit/correct credit report/file dispute/pause) and `human_requested`. It is precision-first, one-way, and never writes text. ADR-1 no longer claims "impossible or caught" for these. | security §3, architecture §5, ADR-1 |
+| 8 | MAJOR | Contradictory execution/trace contracts | One canonical definition in architecture: semantic calls vs transport attempts; error table with separate retry/fallback columns; auth/billing circuit breaker writes all lines and exits 3; `PROMPT_VERSION` = prefix + tool declarations + answer schema; §8 → §4 cross-reference fixed. The evaluation spec mirrors it (A-012). | architecture §3.1, §7; evaluation §5–§7 |
+| 9 | MAJOR | Holdout metadata leaked in the repo | Holdout IDs/categories removed from `specs/evaluation.md`; the index moved to `~/Documents/Sezzle/holdout/HOLDOUT_INDEX.md` (A-012). | evaluation §1, §3 |
+| 10 | MAJOR | Weak/unfair dev regexes | adv-d05/d06/d07/d14/d15/d18/d25 fixed; negation traps removed from dev and holdout (kept only as golden `weak_check` diagnostics) (A-012). | cases, evaluation §2 |
+| 11 | MAJOR | Implementation prompts require guessing | T-01 owns `llm/__init__.py`; every prompt uses the full lint/format/test gate; a default fake responder makes the offline CLI runnable; IP-04/IP-05/IP-06 acceptance criteria updated. | implementation-prompts, architecture §8, tasks |
+| 12 | MAJOR | Not credible in ~2 h | Scope tiers with explicit cut order (Tier 3 first: CI/zip automation, automated taxonomy/noise floor, derived-fact breadth, concurrency). | tasks "Scope tiers" |
+| 13 | MINOR | ADR format / measurement wording | ADR-3 gains an explicit **Why**; exact smoke-test medians with n=3 caveat; absolute claims removed from ADR-1. | DECISIONS.md |
