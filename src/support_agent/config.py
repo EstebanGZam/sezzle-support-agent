@@ -25,7 +25,9 @@ DEFAULT_PROVIDER = "gemini"
 DEFAULT_PRIMARY_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_FALLBACK_MODEL = "gemini-3.1-flash-lite"
 DEFAULT_THINKING_LEVEL = "minimal"
-DEFAULT_TIMEOUT_S = 8.0
+DEFAULT_TIMEOUT_S = 10.0
+# The Gemini API rejects request deadlines below 10 s (HTTP 400 INVALID_ARGUMENT).
+GEMINI_MIN_TIMEOUT_S = 10.0
 DEFAULT_MAX_ATTEMPTS = 2
 DEFAULT_MAX_OUTPUT_TOKENS = 600
 DEFAULT_INPUT_CHAR_CAP = 2000
@@ -152,6 +154,14 @@ class Settings:
                 f"got {thinking_level!r}"
             )
 
+        timeout_s = _positive_float(env, "LLM_TIMEOUT_S", DEFAULT_TIMEOUT_S)
+        if provider == "gemini" and timeout_s < GEMINI_MIN_TIMEOUT_S:
+            warnings.append(
+                f"LLM_TIMEOUT_S={timeout_s:g} is below the Gemini minimum request deadline; "
+                f"raised to {GEMINI_MIN_TIMEOUT_S:g}"
+            )
+            timeout_s = GEMINI_MIN_TIMEOUT_S
+
         fake_script = _get(env, "FAKE_LLM_SCRIPT", "")
         data_dir = Path(_get(env, "DATA_DIR", DEFAULT_DATA_DIR))
         if not data_dir.is_absolute():
@@ -163,7 +173,7 @@ class Settings:
             fallback_model=fallback,
             api_key=api_key,
             thinking_level=thinking_level,
-            timeout_s=_positive_float(env, "LLM_TIMEOUT_S", DEFAULT_TIMEOUT_S),
+            timeout_s=timeout_s,
             max_attempts=_positive_int(env, "LLM_MAX_ATTEMPTS", DEFAULT_MAX_ATTEMPTS),
             max_output_tokens=_positive_int(
                 env, "LLM_MAX_OUTPUT_TOKENS", DEFAULT_MAX_OUTPUT_TOKENS

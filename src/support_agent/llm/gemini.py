@@ -44,7 +44,7 @@ from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel
 
-from support_agent.config import ConfigError, Settings
+from support_agent.config import GEMINI_MIN_TIMEOUT_S, ConfigError, Settings
 from support_agent.llm.base import (
     AttemptOutput,
     AttemptRunner,
@@ -104,7 +104,7 @@ class GeminiClient:
             settings.primary_model,
             settings.fallback_model,
             max_attempts=settings.max_attempts,
-            timeout_s=settings.timeout_s,
+            timeout_s=max(settings.timeout_s, GEMINI_MIN_TIMEOUT_S),
             sleep=sleep,
             clock=clock,
         )
@@ -126,6 +126,13 @@ class GeminiClient:
         contents = to_contents(req.contents)
 
         def attempt(model: str, timeout_s: float) -> AttemptOutput:
+            if req.deadline is not None and timeout_s < GEMINI_MIN_TIMEOUT_S:
+                raise ProviderError(
+                    "timeout",
+                    f"case deadline leaves {timeout_s:.1f} s, below the "
+                    f"{GEMINI_MIN_TIMEOUT_S:g} s minimum request deadline",
+                    model=model,
+                )
             config = self.build_config(req, timeout_s)
             try:
                 response = self._client.models.generate_content(
@@ -234,7 +241,8 @@ def _schema(json_schema: Mapping[str, Any]) -> types.Schema:
 
 
 def _timeout_ms(timeout_s: float) -> int:
-    return max(1, int(timeout_s * 1000))
+    """SDK timeout in ms, never below the API's minimum request deadline."""
+    return int(max(timeout_s, GEMINI_MIN_TIMEOUT_S) * 1000)
 
 
 # --- response normalization -----------------------------------------------------------------
