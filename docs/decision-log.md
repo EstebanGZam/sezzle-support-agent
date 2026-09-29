@@ -30,6 +30,31 @@ The three graded ADRs are in `DECISIONS.md` (exactly three, as the brief require
 | OD-24 | 2026-09-27 | Implementation authorized (IP-01/E-01 onward); real runs only on a verified project | **Owner** | P-006 | — |
 | OD-25 | 2026-09-28 | Billing verified: `GOOGLE_API_KEY` project is on the paid tier (prepaid); first real evaluation authorized; publication/deploy still need separate authorization | **Owner** | P-007 | Resolves A-10; unblocks T-13 |
 
+## OD-26 — Free inference provider for the assessment (owner-approved, 2026-09-28, P-008)
+
+Supplementary record: this does not belong in the three graded ADRs, though ADR-3 references it.
+
+- **Decision (owner):** investigate and adopt a compatible free inference provider. Research recommendation: **GroqCloud free plan**, primary `openai/gpt-oss-120b`, fallback `openai/gpt-oss-20b` (same org and key, so the same data terms). Zero Data Retention should be enabled in Groq Data Controls.
+- **Budget constraint:** the owner's available budget for paid inference.
+- **Observed Gemini availability failures:** runs 001–003 (`ITERATION.md` §1). Synthetic probes showed provider-wide 503/504 on the paid standard tier across Flash and Flash-Lite models. 21–30 of 35 cases ended in safe failure.
+- **Alternatives considered** (`docs/planning/research/free-provider-report.md`):
+  - Paid: stay on Gemini paid (unavailable during the incident); a larger or other paid model (budget).
+  - Free: **Groq free** — no training by contract, no retention by default, ZDR available. **Cerebras trial** — best features, but $5 credits, a card and a 30-day expiry. **OpenRouter `:free`** — 50 requests/day, and some upstreams log or train. **Mistral free** — trains unless you opt out. **Google AI Studio free** — Unpaid terms: human review and training. **GitHub Models** — retired.
+- **Groq capabilities:** tool calling; strict json_schema structured output; automatic prompt caching on gpt-oss; OpenAI-compatible API.
+- **Groq limitations:**
+  - json_schema can't be combined with tools, so the adapter uses a `submit_answer` function tool.
+  - Free quotas are **8K TPM and 200K TPD per model**, which needs client-side pacing and spreading runs across both models. The quota, not RPM, is the binding limit.
+  - Reasoning tokens count toward limits.
+  - Cache hits are not guaranteed.
+- **Privacy and confidentiality:**
+  - The materials are synthetic, and SUBMISSION.md prohibits *public posting*, not provider processing.
+  - Groq's terms forbid training on inputs/outputs; logs are kept up to 30 days for reliability/abuse unless ZDR is on.
+  - **Accepted residual risk:** policy text and synthetic order data are processed by a third party under free-plan terms.
+  - Only the minimum inference context is sent (system prefix, question, the caller's own tool results) — never credentials, repo contents or development logs.
+- **Would reconsider if:** Groq's terms change (training or retention); ZDR is unavailable to the org and the owner rejects 30-day logs; the free quotas can't complete the evaluation runs; or gpt-oss quality on the eval sets is clearly below Gemini's valid-response behaviour.
+- **Results after migration:** *to be filled with runs 004+* (do not pre-fill).
+- **Implementation:** per P-006, Claude is the primary implementer. Claude hit its usage limit (96 %), so the adapter was implemented by **Codex** under the owner's cross-provider failover policy. Its independent review is assigned to Claude, keeping implementer ≠ reviewer.
+
 ## Agent recommendations — status after P-005
 
 Written into the specs as `[AR-nn]`. Status values:
