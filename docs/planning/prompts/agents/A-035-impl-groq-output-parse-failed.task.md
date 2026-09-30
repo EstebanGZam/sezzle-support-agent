@@ -1,0 +1,6 @@
+Read AGENTS.md first and follow its execution protocol. Touch ONLY the listed files. Report ACs with evidence, full-gate output, deviations. Conventional Commit with task ID. Never read /home/esteban/Documents/Sezzle/holdout/ or .env. No real LLM/network calls.
+
+FIX (T-08). Run 005 trace (evals/runs/005_groq_prompt_v2/golden/trace.jsonl, case v03, post_tool attempt) now records the provider detail: `HTTP 400 output_parse_failed: Parsing failed. The model generated output that could not be parsed. Please adjust your prompt. See 'failed_generation'…`. This is the same phenomenon as `tool_use_failed` (the model's answer is in `failed_generation`), but only `tool_use_failed` is recovered, so it ended as bad_request → SEC-10.
+Required: treat 400 with error.code in {"tool_use_failed", "output_parse_failed"} identically (recover a FinalAnswer-valid `failed_generation` as final_json with recovered=<code>; otherwise malformed → repair). Keep other 400s as bad_request. Add tests for output_parse_failed (valid, invalid, missing failed_generation) mirroring the tool_use_failed tests.
+Files you own: src/support_agent/llm/groq.py, tests/test_groq.py.
+Commit: fix(llm): recover Groq output_parse_failed answers like tool_use_failed [T-08]
