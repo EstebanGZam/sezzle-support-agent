@@ -31,9 +31,12 @@
 - Pacing (eval runs on the free plan): ``TokenPacer`` keeps a per-model rolling-minute token
   window (``GROQ_TPM_BUDGET``), an optional minimum interval between call starts
   (``GROQ_MIN_CALL_INTERVAL_S``) and the ``retry-after`` of a per-minute 429. It is operational
-  state of this per-batch client (timestamps and token counts only). A wait that cannot end
-  before the case deadline is not taken: the attempt fails as ``rate_limit_minute`` without being
-  sent, so the fallback model (a separate quota bucket) is tried.
+  state of this per-batch client (timestamps and token counts only). A wait that ends before the
+  case deadline is always taken and the call is then sent, even when both model windows are full;
+  only a wait that cannot end before the case deadline is not taken: the attempt fails as
+  ``rate_limit_minute`` without being sent, so the fallback model (a separate quota bucket) is
+  tried. With pacing on, ``CASE_DEADLINE_S`` defaults to 180 s (config), longer than one window
+  plus one attempt, so a fresh case never fails unsent for pacing alone.
 - Observability: every trace attempt carries the call's pacing estimate as ``est_tokens`` (for
   calibration against reported usage); a failed or retried attempt also carries ``detail``,
   ``HTTP <code> <error.code or type>: <provider message, ≤ 200 chars>`` (or the client-side reason
@@ -43,10 +46,13 @@ Error classification (``classify_response``), per the §7 table:
 
 - 401/403 → ``auth_billing``; 404 → ``model_not_found``; 408 → ``timeout``.
 - 413 → ``rate_limit_minute`` when the message names the per-minute token limit (TPM) and the
-  request's estimated tokens fit ``GROQ_TPM_BUDGET`` (the window, not the request, is full: the
-  model is blocked for ``retry-after``, else until its rolling minute frees, and the fallback
-  model, a separate bucket, is tried); otherwise ``bad_request`` (a body too large, or a request
-  larger than the whole budget, which no wait can fix). Every 413 is logged with the estimate.
+  request fits it (the window, not the request, is full: the model is blocked for
+  ``retry-after``, else until its rolling minute frees, and the fallback model, a separate bucket,
+  is tried); otherwise ``bad_request`` (a body too large, or a request larger than the whole
+  limit, which no wait can fix: never retried or failed over). Whether the request fits is read
+  from the provider's own ``Limit N, Requested M`` when the message carries both (fits iff
+  M <= N); only without them does the client estimate decide (fits iff it is <=
+  ``GROQ_TPM_BUDGET``). Every 413 is logged with the estimate and the provider's values.
 - 429 → ``quota_daily`` when the daily request budget is spent (``x-ratelimit-remaining-requests``
   is ``0``: Groq's request headers are per day) or the message names a per-day limit (TPD/RPD);
   otherwise ``rate_limit_minute``, honouring ``retry-after`` before the next attempt on that model.
@@ -116,6 +122,8 @@ _DAILY_HINT_RE = re.compile(
     r"per[\s_-]?day|daily|\b(?:TPD|RPD)\b|(?:tokens|requests)\s+per\s+day", re.I
 )
 _TPM_HINT_RE = re.compile(r"tokens\s+per\s+minute|\bTPM\b", re.I)
+_LIMIT_RE = re.compile(r"\bLimit\s*:?\s*(\d+)", re.I)
+_REQUESTED_RE = re.compile(r"\bRequested\s*:?\s*(\d+)", re.I)
 _ORG_ID_RE = re.compile(r"\borg_[A-Za-z0-9]+")
 _BEARER_RE = re.compile(r"\bBearer\s+[^\s\"',;]+", re.I)
 _GROQ_KEY_RE = re.compile(r"\bgsk_[A-Za-z0-9_-]+")
@@ -242,12 +250,15 @@ class GroqClient:
                         wait_s = self.pacer.window_free_in(model)
                     self.pacer.block(model, wait_s)
                 if response.status_code == 413:
+                    sizes = _limit_and_requested(_error_fields(response)[1])
                     logger.warning(
                         "Groq rejected a request as too large (HTTP 413) for model %s: "
-                        "~%d estimated tokens against GROQ_TPM_BUDGET=%d; classified as %s",
+                        "~%d estimated tokens against GROQ_TPM_BUDGET=%d, provider %s; "
+                        "classified as %s",
                         model,
                         estimate,
                         self._settings.tpm_budget,
+                        f"Limit {sizes[0]}, Requested {sizes[1]}" if sizes else "sent no values",
                         err.kind,
                     )
                 raise err
@@ -642,9 +653,10 @@ def classify_response(
     est_tokens: int | None = None,
     tpm_budget: int = 0,
 ) -> ProviderError:
-    """Map a non-200 response to a ``ProviderError`` (see module doc). ``est_tokens`` and
-    ``tpm_budget`` decide whether a 413 per-minute-limit rejection is a full window
-    (``rate_limit_minute``) or a request no window can hold (``bad_request``)."""
+    """Map a non-200 response to a ``ProviderError`` (see module doc). A 413 per-minute-limit
+    rejection is a full window (``rate_limit_minute``) or a request no window can hold
+    (``bad_request``): decided by the provider's ``Limit``/``Requested`` values when present,
+    else by ``est_tokens`` against ``tpm_budget``."""
     code = response.status_code
     error_type, error_message = _error_fields(response)
     message = f"HTTP {code} {error_type}: {error_message}"
@@ -656,16 +668,20 @@ def classify_response(
         kind = "timeout"
     elif code == 413:
         estimate = f"~{est_tokens} estimated tokens" if est_tokens is not None else "no estimate"
-        budget = f"GROQ_TPM_BUDGET={tpm_budget}"
-        if _TPM_HINT_RE.search(error_message) and _fits_budget(est_tokens, tpm_budget):
+        basis = f"{estimate}, GROQ_TPM_BUDGET={tpm_budget}"
+        sizes = _limit_and_requested(error_message)
+        if sizes is not None:  # the provider's own numbers beat the client-side estimate
+            limit, requested = sizes
+            fits = requested <= limit
+            basis = f"provider Limit {limit}, Requested {requested}; {basis}"
+        else:
+            fits = _fits_budget(est_tokens, tpm_budget)
+        if _TPM_HINT_RE.search(error_message) and fits:
             kind = "rate_limit_minute"
-            message = f"per-minute token window full ({estimate} <= {budget}); {message}"
+            message = f"per-minute token window full ({basis}); {message}"
         else:
             kind = "bad_request"
-            message = (
-                f"request too large (body or per-minute token limit; {estimate}, {budget}); "
-                f"{message}"
-            )
+            message = f"request too large (body or per-minute token limit; {basis}); {message}"
     elif code == 429:
         kind = "quota_daily" if _is_daily_limit(response, error_message) else "rate_limit_minute"
     elif code in _OVERLOAD_CODES:  # before the 4xx range: 498 is a capacity signal
@@ -679,6 +695,15 @@ def classify_response(
 
 def _fits_budget(est_tokens: int | None, tpm_budget: int) -> bool:
     return est_tokens is not None and tpm_budget > 0 and est_tokens <= tpm_budget
+
+
+def _limit_and_requested(error_message: str) -> tuple[int, int] | None:
+    """The provider's ``(Limit N, Requested M)`` from a 413 message, if it carries both."""
+    limit = _LIMIT_RE.search(error_message)
+    requested = _REQUESTED_RE.search(error_message)
+    if limit is None or requested is None:
+        return None
+    return int(limit.group(1)), int(requested.group(1))
 
 
 def error_detail(response: httpx.Response, secret: str | None = None) -> str:
