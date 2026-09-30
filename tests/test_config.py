@@ -6,6 +6,7 @@ import pytest
 
 from support_agent.config import (
     GEMINI_MIN_TIMEOUT_S,
+    GROQ_KNOWN_COMPATIBLE_MODELS,
     KNOWN_COMPATIBLE_MODELS,
     PROJECT_ROOT,
     ConfigError,
@@ -99,6 +100,7 @@ def test_numeric_overrides():
         ("CASE_DEADLINE_S", "soon"),
         ("GEMINI_THINKING_LEVEL", "extreme"),
         ("LLM_PROVIDER", "openai"),
+        ("LLM_PROVIDER", "grok"),
     ],
 )
 def test_invalid_values_raise_config_error(var, value):
@@ -242,3 +244,153 @@ def test_repr_and_str_never_show_key():
 def test_relative_data_dir_resolves_against_project_root(tmp_path):
     assert Settings.from_env(gemini_env(DATA_DIR="data")).data_dir == PROJECT_ROOT / "data"
     assert Settings.from_env(gemini_env(DATA_DIR=str(tmp_path))).data_dir == tmp_path
+
+
+# --- provider-aware settings: GroqCloud (P-008) ----------------------------------------------
+
+GROQ_KEY = "groq-unit-test-dummy-key-0123"
+
+
+def groq_env(**extra: str) -> dict[str, str]:
+    return {"LLM_PROVIDER": "groq", "GROQ_API_KEY": GROQ_KEY, **extra}
+
+
+def test_groq_defaults():
+    s = Settings.from_env(groq_env())
+    assert s.provider == "groq"
+    assert s.primary_model == "openai/gpt-oss-120b"
+    assert s.fallback_model == "openai/gpt-oss-20b"
+    assert s.reasoning_effort == "low"
+    assert s.tpm_budget == 8000
+    assert s.min_call_interval_s == 0.0
+    assert s.max_output_tokens == 1024  # reasoning tokens count toward max_completion_tokens
+    assert s.credential_env_var == "GROQ_API_KEY"
+    assert s.credential_fingerprint() == credential_fingerprint(GROQ_KEY)
+
+
+def test_groq_known_compatible_set():
+    assert {"openai/gpt-oss-120b", "openai/gpt-oss-20b"} == GROQ_KNOWN_COMPATIBLE_MODELS
+
+
+def test_groq_reads_only_groq_api_key():
+    s = Settings.from_env(
+        groq_env(GOOGLE_API_KEY=FAKE_KEY, GEMINI_API_KEY=INHERITED_KEY),
+    )
+    assert s.api_key is not None
+    assert s.api_key.reveal() == GROQ_KEY
+    assert s.credential_fingerprint() == credential_fingerprint(GROQ_KEY)
+
+
+@pytest.mark.parametrize("other", ["GOOGLE_API_KEY", "GEMINI_API_KEY"])
+def test_groq_never_falls_back_to_google_or_gemini_keys(other):
+    with pytest.raises(ConfigError, match="GROQ_API_KEY is not set"):
+        Settings.from_env({"LLM_PROVIDER": "groq", other: FAKE_KEY})
+
+
+def test_gemini_ignores_groq_api_key():
+    with pytest.raises(ConfigError, match="GOOGLE_API_KEY is not set"):
+        Settings.from_env({"LLM_PROVIDER": "gemini", "GROQ_API_KEY": GROQ_KEY})
+    s = Settings.from_env(gemini_env(GROQ_API_KEY=GROQ_KEY))
+    assert s.api_key is not None and s.api_key.reveal() == FAKE_KEY
+    assert s.credential_env_var == "GOOGLE_API_KEY"
+
+
+def test_fake_provider_ignores_groq_api_key():
+    s = Settings.from_env({"LLM_PROVIDER": "fake", "GROQ_API_KEY": GROQ_KEY})
+    assert s.api_key is None and s.credential_env_var == "GOOGLE_API_KEY"
+
+
+def test_groq_repr_hides_key():
+    s = Settings.from_env(groq_env())
+    for text in (repr(s), str(s), repr(s.api_key), str(dataclasses.asdict(s))):
+        assert GROQ_KEY not in text
+
+
+def test_groq_models_overridable_and_gemini_vars_ignored():
+    s = Settings.from_env(
+        groq_env(
+            GROQ_PRIMARY_MODEL="openai/gpt-oss-20b",
+            GROQ_FALLBACK_MODEL="openai/gpt-oss-120b",
+            GEMINI_PRIMARY_MODEL="not-a-groq-model",
+        )
+    )
+    assert (s.primary_model, s.fallback_model) == ("openai/gpt-oss-20b", "openai/gpt-oss-120b")
+
+
+def test_gemini_ignores_groq_model_vars():
+    s = Settings.from_env(gemini_env(GROQ_PRIMARY_MODEL="openai/gpt-oss-20b"))
+    assert s.primary_model == "gemini-3.5-flash-lite"
+
+
+@pytest.mark.parametrize("var", ["GROQ_PRIMARY_MODEL", "GROQ_FALLBACK_MODEL"])
+def test_groq_unverified_model_needs_override(var):
+    with pytest.raises(ConfigError, match="known-compatible"):
+        Settings.from_env(groq_env(**{var: "qwen/qwen3.8-27b"}))
+    s = Settings.from_env(groq_env(**{var: "qwen/qwen3.8-27b"}), allow_unverified_model=True)
+    assert "qwen/qwen3.8-27b" in (s.primary_model, s.fallback_model)
+
+
+def test_groq_gemini_models_are_not_groq_compatible():
+    with pytest.raises(ConfigError, match="GROQ_PRIMARY_MODEL"):
+        Settings.from_env(groq_env(GROQ_PRIMARY_MODEL="gemini-3.5-flash-lite"))
+
+
+def test_groq_empty_fallback_disables_it_and_equal_fallback_warns():
+    assert Settings.from_env(groq_env(GROQ_FALLBACK_MODEL="")).fallback_model is None
+    s = Settings.from_env(groq_env(GROQ_FALLBACK_MODEL="openai/gpt-oss-120b", CASE_DEADLINE_S="90"))
+    assert s.fallback_model is None
+    assert s.warnings == (
+        "GROQ_FALLBACK_MODEL equals GROQ_PRIMARY_MODEL (openai/gpt-oss-120b); fallback ignored",
+    )
+
+
+def test_groq_timeout_is_not_clamped_to_the_gemini_minimum():
+    s = Settings.from_env(groq_env(LLM_TIMEOUT_S="4", CASE_DEADLINE_S="90"))
+    assert (s.timeout_s, s.warnings) == (4.0, ())
+
+
+def test_groq_overrides():
+    s = Settings.from_env(
+        groq_env(
+            GROQ_REASONING_EFFORT="MEDIUM",
+            GROQ_TPM_BUDGET="6000",
+            GROQ_MIN_CALL_INTERVAL_S="2.5",
+            LLM_MAX_OUTPUT_TOKENS="800",
+        )
+    )
+    assert (s.reasoning_effort, s.tpm_budget, s.min_call_interval_s) == ("medium", 6000, 2.5)
+    assert s.max_output_tokens == 800
+
+
+def test_groq_pacing_can_be_disabled():
+    s = Settings.from_env(groq_env(GROQ_TPM_BUDGET="0", GROQ_MIN_CALL_INTERVAL_S="0"))
+    assert (s.tpm_budget, s.min_call_interval_s, s.warnings) == (0, 0.0, ())
+
+
+def test_groq_short_case_deadline_with_pacing_warns():
+    s = Settings.from_env(groq_env())
+    assert len(s.warnings) == 1
+    assert "CASE_DEADLINE_S=30" in s.warnings[0] and "pacing" in s.warnings[0]
+    assert Settings.from_env(groq_env(CASE_DEADLINE_S="60")).warnings == ()
+
+
+def test_gemini_default_output_tokens_unchanged_by_groq_default():
+    assert Settings.from_env(gemini_env()).max_output_tokens == 600
+    assert Settings.from_env({"LLM_PROVIDER": "fake"}).max_output_tokens == 600
+
+
+@pytest.mark.parametrize(
+    ("var", "value"),
+    [
+        ("GROQ_REASONING_EFFORT", "minimal"),
+        ("GROQ_REASONING_EFFORT", "extreme"),
+        ("GROQ_TPM_BUDGET", "-1"),
+        ("GROQ_TPM_BUDGET", "lots"),
+        ("GROQ_MIN_CALL_INTERVAL_S", "-0.5"),
+        ("GROQ_MIN_CALL_INTERVAL_S", "inf"),
+        ("GROQ_MIN_CALL_INTERVAL_S", "nan"),
+    ],
+)
+def test_groq_invalid_values_raise_config_error(var, value):
+    with pytest.raises(ConfigError, match=var):
+        Settings.from_env(groq_env(**{var: value}))
