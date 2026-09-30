@@ -134,7 +134,9 @@ class AttemptRecord:
     ``retry`` (same model again), ``fallback`` (next model), ``failed`` (terminal); ``reason`` is
     why this attempt went to ``model`` (``AttemptReason``). ``paced_ms`` is the client-side
     pacing wait before the attempt (not part of ``latency_ms``); it is ``None``, and left out of
-    the trace, for calls made without a ``pace`` hook."""
+    the trace, for calls made without a ``pace`` hook. ``recovered`` names how an adapter salvaged
+    the model's output from a provider-side rejection (e.g. ``tool_use_failed``); it is ``None``,
+    and left out of the trace, otherwise."""
 
     model: str
     status: AttemptStatus
@@ -142,6 +144,7 @@ class AttemptRecord:
     latency_ms: int
     reason: AttemptReason = "primary"
     paced_ms: int | None = None
+    recovered: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         record: dict[str, Any] = {
@@ -153,6 +156,8 @@ class AttemptRecord:
         }
         if self.paced_ms is not None:
             record["paced_ms"] = self.paced_ms
+        if self.recovered is not None:
+            record["recovered"] = self.recovered
         return record
 
 
@@ -293,6 +298,8 @@ class AttemptOutput:
     raw_model_turn: Any = None
     usage: Usage = field(default_factory=Usage)
     finish_reason: str | None = None
+    recovered: str | None = None
+    """Set when the output was salvaged from a provider-side rejection (see ``AttemptRecord``)."""
 
 
 @dataclass(frozen=True)
@@ -473,7 +480,9 @@ class AttemptRunner:
 
             self._observe(model, None)
             records.append(
-                AttemptRecord(model, "ok", None, _ms(self._clock() - t0), reason, paced_ms)
+                AttemptRecord(
+                    model, "ok", None, _ms(self._clock() - t0), reason, paced_ms, out.recovered
+                )
             )
             return LLMResponse(
                 function_calls=out.function_calls,

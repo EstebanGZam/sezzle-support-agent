@@ -326,13 +326,122 @@ def test_premature_submit_answer_next_to_a_lookup_goes_to_the_agent() -> None:
     assert resp.final_json is None
 
 
-def test_tool_use_failed_400_is_a_malformed_attempt_not_an_error() -> None:
-    failed = error(400, "Failed to call a function.", error_code="tool_use_failed")
-    client, server, _, _ = make_client([failed])
+# The shape Groq returns when gpt-oss writes the answer as text instead of calling a tool.
+TOOL_USE_FAILED_GENERATION = (
+    '{\n  "answer": "…",\n  "cited_policies": [],\n  "escalation_reason": "none",\n'
+    '  "policy_applied": false\n}'
+)
+
+
+def tool_use_failed(generation: Any = None, *, include: bool = True) -> httpx.Response:
+    err: dict[str, Any] = {
+        "message": "Tool choice is required, but model did not call a tool",
+        "type": "invalid_request_error",
+        "code": "tool_use_failed",
+    }
+    if include:
+        err["failed_generation"] = generation
+    return httpx.Response(400, json={"error": err})
+
+
+@pytest.mark.parametrize("tool_mode", ["auto", "none"])
+def test_tool_use_failed_answer_is_recovered_as_final_json(tool_mode: str) -> None:
+    client, server, _, _ = make_client([tool_use_failed(TOOL_USE_FAILED_GENERATION)])
+    resp = client.generate(request(tool_mode=tool_mode))
+    assert resp.final_json == {
+        "answer": "…",
+        "cited_policies": [],
+        "escalation_reason": "none",
+        "policy_applied": False,
+    }
+    assert not resp.malformed and resp.function_calls == ()
+    assert resp.raw_model_turn is None
+    assert resp.finish_reason == "tool_use_failed"
+    assert len(server.requests) == 1
+    assert [a.to_dict() for a in resp.attempts] == [
+        {
+            "model": PRIMARY,
+            "reason": "primary",
+            "status": "ok",
+            "error_class": None,
+            "latency_ms": 0,
+            "paced_ms": 0,
+            "recovered": "tool_use_failed",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "generation",
+    [
+        '{\n  "answer": "cut off',  # partial JSON
+        "not json at all",
+        '["a", "list"]',
+        json.dumps({**FINAL, "policy_applied": "yes"}),  # fails the schema
+        json.dumps({"answer": "Synthetic reply."}),  # missing fields
+        json.dumps({**FINAL, "extra": 1}),
+        json.dumps({"name": "get_my_orders", "arguments": {}}),  # a lookup-like call
+        json.dumps({"name": SUBMIT_ANSWER, "arguments": FINAL}),
+        "",
+        17,
+        {"answer": "an object, not a string"},
+    ],
+)
+def test_tool_use_failed_without_a_valid_answer_is_malformed(generation: Any) -> None:
+    client, server, _, _ = make_client([tool_use_failed(generation)])
+    resp = client.generate(request())
+    assert resp.malformed and resp.raw_model_turn is None
+    assert len(server.requests) == 1  # one attempt: no same-model retry, no fallback
+    assert [a.to_dict() for a in resp.attempts] == [
+        {
+            "model": PRIMARY,
+            "reason": "primary",
+            "status": "ok",
+            "error_class": None,
+            "latency_ms": 0,
+            "paced_ms": 0,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        tool_use_failed(include=False),
+        tool_use_failed(None),
+        error(400, "Failed to call a function.", error_code="tool_use_failed"),
+    ],
+)
+def test_tool_use_failed_without_failed_generation_is_malformed(response: httpx.Response) -> None:
+    client, server, _, _ = make_client([response])
     resp = client.generate(request())
     assert resp.malformed and resp.raw_model_turn is None
     assert len(server.requests) == 1
-    assert [a.status for a in resp.attempts] == ["ok"]
+    assert [(a.status, a.recovered) for a in resp.attempts] == [("ok", None)]
+
+
+def test_tool_use_failed_is_not_recovered_without_an_answer_schema() -> None:
+    client, _, _, _ = make_client([tool_use_failed(TOOL_USE_FAILED_GENERATION)])
+    resp = client.generate(request(response_schema=None))
+    assert resp.malformed
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        error(400, "Some other invalid request."),
+        error(400, "Some other invalid request.", error_code="invalid_value"),
+        httpx.Response(400, json={"error": "tool_use_failed"}),  # no error object
+        httpx.Response(400, text="tool_use_failed"),  # not JSON
+        error(422, "Unprocessable.", error_code="tool_use_failed"),  # not a 400
+    ],
+)
+def test_other_4xx_stay_bad_request(response: httpx.Response) -> None:
+    client, server, _, _ = make_client([response])
+    with pytest.raises(ProviderError) as info:
+        client.generate(request())
+    assert info.value.kind == "bad_request"
+    assert len(server.requests) == 1
 
 
 def test_content_filter_is_blocked_safety() -> None:
@@ -783,6 +892,44 @@ def test_agent_end_to_end_over_groq_with_trace_pacing() -> None:
     assert tool_reply["status"] == "ok"
     for call in result.trace.to_dict()["llm_calls"]:
         assert call["attempts"][0]["paced_ms"] == 0
+
+
+def test_agent_trace_records_a_recovered_tool_use_failed_answer() -> None:
+    resources = Resources.load(Settings.from_env({"LLM_PROVIDER": "fake"}))
+    statics = AgentStatics.build(resources)
+    lookup = completion([tool_call("get_my_orders", {}, "call_1")])
+    client, _, _, clock = make_client([ok(lookup), tool_use_failed(json.dumps(FINAL))])
+    case = Case(id="g1", user_id="u002", question="When is my next payment?")
+    result = answer_case(resources, client, case, statics=statics, clock=clock)
+    assert result.answer == FINAL["answer"]
+    assert result.route == "tool"
+    assert result.trace.error_class is None
+    first, second = result.trace.to_dict()["llm_calls"]
+    assert "recovered" not in first["attempts"][0]
+    assert second["outcome"] == "final"
+    assert second["attempts"][0]["recovered"] == "tool_use_failed"
+
+
+def test_recovered_answer_still_goes_through_the_agent_validator() -> None:
+    resources = Resources.load(Settings.from_env({"LLM_PROVIDER": "fake"}))
+    statics = AgentStatics.build(resources)
+    empty = json.dumps({**FINAL, "answer": ""})  # schema-valid, but the validator rejects it
+    client, server, _, clock = make_client([tool_use_failed(empty), ok()])
+    case = Case(id="g1", user_id="u002", question="How does Pay in 4 work?")
+    result = answer_case(resources, client, case, statics=statics, clock=clock)
+    assert result.answer == FINAL["answer"]
+    assert len(server.requests) == 2  # the repair call ran
+    trace = result.trace.to_dict()
+    assert trace["repair_attempted"] is True
+    assert trace["validator"][0] == {
+        "check": "schema",
+        "verdict": "fail",
+        "detail": "answer is empty",
+        "stage": "initial",
+    }
+    calls = trace["llm_calls"]
+    assert [c["purpose"] for c in calls] == ["initial", "repair"]
+    assert calls[0]["attempts"][0]["recovered"] == "tool_use_failed"
 
 
 def test_run_config_records_groq_settings(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
