@@ -136,7 +136,10 @@ class AttemptRecord:
     pacing wait before the attempt (not part of ``latency_ms``); it is ``None``, and left out of
     the trace, for calls made without a ``pace`` hook. ``recovered`` names how an adapter salvaged
     the model's output from a provider-side rejection (e.g. ``tool_use_failed``); it is ``None``,
-    and left out of the trace, otherwise."""
+    and left out of the trace, otherwise. ``est_tokens`` is the adapter's client-side token
+    estimate used for pacing (for calibration against reported usage); ``detail`` is a short,
+    scrubbed provider error description of a failed or retried attempt (e.g. ``HTTP 413
+    rate_limit_exceeded: …``). Both are optional: ``None`` values are left out of the trace."""
 
     model: str
     status: AttemptStatus
@@ -145,6 +148,8 @@ class AttemptRecord:
     reason: AttemptReason = "primary"
     paced_ms: int | None = None
     recovered: str | None = None
+    est_tokens: int | None = None
+    detail: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         record: dict[str, Any] = {
@@ -158,6 +163,10 @@ class AttemptRecord:
             record["paced_ms"] = self.paced_ms
         if self.recovered is not None:
             record["recovered"] = self.recovered
+        if self.est_tokens is not None:
+            record["est_tokens"] = self.est_tokens
+        if self.detail is not None:
+            record["detail"] = self.detail
         return record
 
 
