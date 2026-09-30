@@ -1,0 +1,8 @@
+# R-02 — Resolution (Groq provider review by Codex)
+
+| # | Severity | Finding | Resolution |
+|---|---|---|---|
+| 1 | MAJOR | Pacing plus the 30 s case deadline can turn cases into unsent safe failures | **Fixed (A-036).** Groq with pacing defaults to `CASE_DEADLINE_S=180`; a warning fires below one pacing window plus one attempt; a call with both model windows full waits and is then sent. Three-call regression test added. Note: real runs 004/005 already set `CASE_DEADLINE_S=180` explicitly. |
+| 2 | MAJOR | A permanently oversized 413 was classified from the local estimate | **Fixed (A-036).** The provider's `Limit`/`Requested` values are parsed; `Requested > Limit` → `bad_request`, never retried. Window saturation → `rate_limit_minute`. |
+| 3 | MAJOR | `tool_use_failed` recovery bypasses the specified repair path | **Not changed — lead decision, recorded as AR-10 (proposed, pending owner).** Reasons: (a) the recovered `failed_generation` is the model's own answer and still goes through the full agent `OutputValidator`, which triggers the repair path on any failure (tested: `test_recovered_answer_still_goes_through_the_agent_validator`); (b) on the free plan, a repair call spends scarce TPD quota to re-emit the same content; (c) the recovery is traced (`recovered=<code>`), so the scorer and reviewers can see it. Architecture §8.1 is updated to say so. The reviewer's point about spec drift was valid, and the spec now matches the code. |
+| 4 | MINOR | Inactive-provider settings can break startup | **Fixed (A-036).** Only the active provider's settings are parsed. Cross-provider tests added. |

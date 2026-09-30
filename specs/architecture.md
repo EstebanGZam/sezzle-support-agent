@@ -195,7 +195,7 @@ else:                                                   route = "policy"   # inc
   - Tool mode `none` → tools `[submit_answer]` with a forced `tool_choice`. The model structurally can't look up again.
   - `parallel_tool_calls=false`. The agent loop, validator, routing and contract are unchanged.
 - **Defaults:** `openai/gpt-oss-120b` primary, `openai/gpt-oss-20b` fallback, `reasoning_effort=low`, `LLM_MAX_OUTPUT_TOKENS=1024` for groq (reasoning tokens count toward completion), `include_reasoning=false`. The Gemini 10 s minimum timeout does not apply.
-- **Free-plan quotas** (8K TPM, 200K TPD per model): a per-batch, per-model token-bucket paces calls (`GROQ_TPM_BUDGET`), and the waits are recorded as `paced_ms`. Daily-quota 429 → `quota_daily` (that model is disabled for the batch, fallback used); other 429 → `rate_limit_minute` honouring `retry-after`; 498/503/504 → `overloaded`; 400 `tool_use_failed` → repair path.
+- **Free-plan quotas** (8K TPM, 200K TPD per model): a per-batch, per-model token-bucket paces calls (`GROQ_TPM_BUDGET`), and the waits are recorded as `paced_ms`. Daily-quota 429 → `quota_daily` (that model is disabled for the batch, fallback used); other 429 → `rate_limit_minute` honouring `retry-after`; 498/503/504 → `overloaded`; 400 `tool_use_failed` / `output_parse_failed` → if `failed_generation` is a schema-valid `FinalAnswer`, it is used as the answer (traced as `recovered=<code>`) and **still passes the full OutputValidator** (whose failures trigger the repair call); otherwise → repair path [AR-10, proposed].
 - **Eval runs** on Groq need `CASE_DEADLINE_S` ≈ 150–180 s, because pacing waits count against the case deadline.
 
 ## 9. Concurrency path (not built now)

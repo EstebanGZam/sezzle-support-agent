@@ -74,6 +74,7 @@ Written into the specs as `[AR-nn]`. Status values:
 | AR-06 | Free-tier key never used as automatic fallback | Gemini research + smoke test | architecture §7, A-10 | **Owner-directed** → OD-16 |
 | AR-07 | One-way escalation tripwire extended to explicit human-only action requests and explicit human requests (precision-first; never writes answers) | Codex review R-00 #7 | security §3, architecture §5 | **Provisionally approved (owner)** |
 | AR-08 | Scope tiers and cut order | Codex review R-00 #12 | tasks.md | **Provisionally approved (owner)** |
+| AR-10 | Groq `tool_use_failed`/`output_parse_failed`: recover a schema-valid `failed_generation` as the answer (still fully validated; traced) instead of spending a repair call | Lead, run 004/005 evidence; contested by Codex R-02 #3 | architecture §8.1, `docs/reviews/R-02-resolution.md` | Proposed |
 | AR-09 | Application reads the key only from `GOOGLE_API_KEY` and passes it explicitly; an inherited `GEMINI_API_KEY` is ignored; runs record credential env-var name + fingerprint | Credential investigation (P-005 §1) | architecture §8, evaluation §6 | Proposed |
 
 ## Pending owner decisions
