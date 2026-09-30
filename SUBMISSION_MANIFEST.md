@@ -26,6 +26,7 @@ Based on `assessment/PROMPT.md` ("Deliverables") and `assessment/SUBMISSION.md`:
 | Decisions, reviews, agent process | `docs/decision-log.md`, `docs/reviews/`, `docs/agent-plan.md`, `docs/implementation-prompts.md`, `docs/readiness-checklist.md`, `AGENTS.md`, `CLAUDE.md` |
 | Planning research and smoke tests (evidence of how AI tools were directed) | `docs/planning/research/`, `docs/planning/smoke-test/`, `docs/planning/STACK_DECISION_MATRIX.md` |
 | Official inputs + provenance | `assessment/PROMPT.md`, `assessment/SUBMISSION.md`, `assessment/MANIFEST.md`, `assessment/SHA256SUMS` |
+| Detailed setup/run/evaluation guide | `docs/REVIEWER_GUIDE.md` |
 | This manifest | `SUBMISSION_MANIFEST.md` |
 
 ## EXCLUDE
