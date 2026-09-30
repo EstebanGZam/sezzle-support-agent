@@ -53,7 +53,7 @@ Supplementary record: this does not belong in the three graded ADRs, though ADR-
   - Only the minimum inference context is sent (system prefix, question, the caller's own tool results) — never credentials, repo contents or development logs.
 - **Would reconsider if:** Groq's terms change (training or retention); ZDR is unavailable to the org and the owner rejects 30-day logs; the free quotas can't complete the evaluation runs; or gpt-oss quality on the eval sets is clearly below Gemini's valid-response behaviour.
 - **Results after migration:** *to be filled with runs 004+* (do not pre-fill).
-- **Implementation:** per P-006, Claude is the primary implementer. Claude hit its usage limit (96 %), so the adapter was implemented by **Codex** under the owner's cross-provider failover policy. Its independent review is assigned to Claude, keeping implementer ≠ reviewer.
+- **Implementation:** first dispatched to Codex under the cross-provider failover policy (Claude was at 96 % usage). Codex hit its own usage limit at startup and produced no work. A reboot then removed the empty worktree. The adapter was implemented by **Claude**, the primary implementer (commits `00d1220`, `8c7d598`, `9088269`; 647 tests green). Its independent review is assigned to **Codex** (R-02), keeping implementer ≠ reviewer.
 
 ## Agent recommendations — status after P-005
 
