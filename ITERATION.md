@@ -39,7 +39,7 @@ Runs 001–003 took place during a Gemini capacity incident: `HTTP 503 UNAVAILAB
 | Run | Change | Golden pass / route | Dev pass / route | Infra safe-failures | Service latency p50 / p95 per attempt |
 |---|---|---|---|---|---|
 | 004 | Provider → Groq `gpt-oss-120b` (fallback 20b), prompt v1 | **6/10 / 9/10** | **12/25 / 16/25** | 4 `bad_request` + 2 `validation_exhausted` | 0.84 s / 1.3 s |
-| 005 | Prompt v2 (iteration 2) + adapter infra fixes | **7/10 / 8/10** | *pending: Groq free daily quota* | 1 `output_parse_failed` (since fixed), 1 `quota_daily` failover | see run notes |
+| 005 | Prompt v2 (iteration 2) + adapter infra fixes | **7/10 / 8/10** (120b) | **11/25 / 18/25** (mostly **20b**: quota) | 1 `output_parse_failed` (since fixed), 1 `quota_daily` failover | see run notes |
 
 - **Provider effect (003 → 004):**
   - Golden pass went from 3/10 to 6/10 and dev from 5/25 to 12/25.
@@ -49,7 +49,10 @@ Runs 001–003 took place during a Gemini capacity incident: `HTTP 503 UNAVAILAB
   - `tool_use_failed` and `output_parse_failed`: the model emits the answer JSON as text. It is recovered from `failed_generation` and still validated (AR-10).
   - 413 on TPM-window saturation: now a rate limit; an oversized request is still a bad request.
   - Provider error `detail` is now traced. Without it the 400s could not be diagnosed from artifacts.
-- **Iteration 2 (prompt v2) on golden:** +1 case (6 → 7). The route changed on one case. Full attribution waits for the dev set.
+- **Iteration 2 (prompt v2):**
+  - Golden +1 case (6 → 7) on the same model.
+  - On dev, the targeted classes improved: OVER_ESCALATION (d10) and the policy-consequence rule (d09) were fixed.
+  - There were 4 regressions, but dev ran mostly on gpt-oss-20b after 120b's daily quota ran out, so the net dev delta is **confounded by the model downgrade** and is reported as inconclusive.
 - **Constraint discovered:** the free plan allows 200K tokens/day per model (rolling 24 h). One full golden + dev run is about 300K tokens, which bounds how many measured iterations fit per day.
 
 ## 4. Earlier planned sequence (kept for the record)
