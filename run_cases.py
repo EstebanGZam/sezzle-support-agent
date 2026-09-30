@@ -234,6 +234,16 @@ def build_run_config(
         "allow_unverified_model": settings.allow_unverified_model,
         "temperature": None,  # not set by the adapter: provider default
         "thinking_level": settings.thinking_level,
+        # GroqCloud-only knobs (None for other providers): reasoning effort and client pacing.
+        "reasoning_effort": settings.reasoning_effort if settings.provider == "groq" else None,
+        "pacing": (
+            {
+                "tpm_budget": settings.tpm_budget,
+                "min_call_interval_s": settings.min_call_interval_s,
+            }
+            if settings.provider == "groq"
+            else None
+        ),
         "max_output_tokens": settings.max_output_tokens,
         "timeout_s": settings.timeout_s,
         "llm_max_attempts": settings.max_attempts,
