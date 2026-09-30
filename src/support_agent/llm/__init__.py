@@ -28,9 +28,13 @@ from support_agent.llm.fake import DEFAULT_FAKE_ANSWER, FakeLLM, FakeScriptExhau
 
 
 def make_llm_client(settings: Settings) -> LLMClient:
-    """The client for ``settings.provider``; the Gemini SDK is imported only when needed."""
+    """The client for ``settings.provider``; provider modules are imported only when needed."""
     if settings.provider == "fake":
         return FakeLLM.from_settings(settings)
+    if settings.provider == "groq":
+        from support_agent.llm.groq import GroqClient
+
+        return GroqClient(settings)
     from support_agent.llm.gemini import GeminiClient
 
     return GeminiClient(settings)

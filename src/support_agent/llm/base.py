@@ -132,22 +132,28 @@ model after a fallback-eligible error), ``retry`` (same model again)."""
 class AttemptRecord:
     """One transport attempt, for the trace. ``status`` is what happened *next*: ``ok`` (success),
     ``retry`` (same model again), ``fallback`` (next model), ``failed`` (terminal); ``reason`` is
-    why this attempt went to ``model`` (``AttemptReason``)."""
+    why this attempt went to ``model`` (``AttemptReason``). ``paced_ms`` is the client-side
+    pacing wait before the attempt (not part of ``latency_ms``); it is ``None``, and left out of
+    the trace, for calls made without a ``pace`` hook."""
 
     model: str
     status: AttemptStatus
     error_class: str | None
     latency_ms: int
     reason: AttemptReason = "primary"
+    paced_ms: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        record: dict[str, Any] = {
             "model": self.model,
             "reason": self.reason,
             "status": self.status,
             "error_class": self.error_class,
             "latency_ms": self.latency_ms,
         }
+        if self.paced_ms is not None:
+            record["paced_ms"] = self.paced_ms
+        return record
 
 
 class ProviderError(Exception):
@@ -334,6 +340,12 @@ def parse_json_object(text: str) -> dict[str, Any] | None:
 Attempt = Callable[[str, float], AttemptOutput]
 """``attempt(model, timeout_s)`` performs one transport attempt or raises ``ProviderError``."""
 
+Pace = Callable[[str, float | None], float]
+"""``pace(model, deadline)`` runs before every transport attempt of a call: it waits as needed
+(client-side rate limiting) and returns the seconds waited, or raises ``ProviderError`` rather
+than wait past the deadline. The wait is recorded as ``AttemptRecord.paced_ms``; the attempt's
+timeout is computed after it."""
+
 
 class AttemptRunner:
     """Executes one semantic call under the §7 table; holds per-batch model state.
@@ -354,6 +366,8 @@ class AttemptRunner:
       re-opens the cooldown. Operational state only (no user data), per batch like the rest.
     - With a ``deadline``, an attempt starts only if ≥ ``min_attempt_s`` remain, and its timeout
       is capped by the remaining time.
+    - An optional per-call ``pace`` hook runs before each attempt (see ``Pace``); an error it
+      raises is handled exactly like a transport error of that attempt.
     """
 
     def __init__(
@@ -394,7 +408,9 @@ class AttemptRunner:
         self.cooldowns_started = 0
         self._probe_next = False
 
-    def run(self, attempt: Attempt, *, deadline: float | None = None) -> LLMResponse:
+    def run(
+        self, attempt: Attempt, *, deadline: float | None = None, pace: Pace | None = None
+    ) -> LLMResponse:
         if self.auth_failed:
             raise AuthBillingError(message="circuit breaker open after an auth/billing failure")
 
@@ -410,14 +426,19 @@ class AttemptRunner:
         model = candidates[0]
         retried: set[str] = set()
         while True:
-            timeout_s = self.timeout_s
-            if deadline is not None:
-                timeout_s = min(timeout_s, deadline - self._clock())
-            t0 = self._clock()
+            paced_ms: int | None = None
+            t0: float | None = None
             try:
+                if pace is not None:
+                    paced_ms = 0  # stays 0 if pace refuses to wait (raises)
+                    paced_ms = _ms(pace(model, deadline))
+                timeout_s = self.timeout_s
+                if deadline is not None:
+                    timeout_s = min(timeout_s, deadline - self._clock())
+                t0 = self._clock()
                 out = attempt(model, timeout_s)
             except ProviderError as err:
-                latency = _ms(self._clock() - t0)
+                latency = _ms(self._clock() - t0) if t0 is not None else 0
                 rule = err.rule
                 if err.kind == "auth_billing":
                     self.auth_failed = True
@@ -429,12 +450,16 @@ class AttemptRunner:
                     deadline, self._clock()
                 )
                 if budget_left and rule.fallback_eligible and model_idx + 1 < len(candidates):
-                    records.append(AttemptRecord(model, "fallback", err.kind, latency, reason))
+                    records.append(
+                        AttemptRecord(model, "fallback", err.kind, latency, reason, paced_ms)
+                    )
                     model_idx += 1
                     model, reason = candidates[model_idx], "failover"
                     continue
                 if budget_left and rule.same_model_retry and model not in retried:
-                    records.append(AttemptRecord(model, "retry", err.kind, latency, reason))
+                    records.append(
+                        AttemptRecord(model, "retry", err.kind, latency, reason, paced_ms)
+                    )
                     retried.add(model)
                     reason = "retry"
                     if rule.backoff:
@@ -443,11 +468,13 @@ class AttemptRunner:
                             records[-1] = replace(records[-1], status="failed")
                             raise self._failure(err, records) from err
                     continue
-                records.append(AttemptRecord(model, "failed", err.kind, latency, reason))
+                records.append(AttemptRecord(model, "failed", err.kind, latency, reason, paced_ms))
                 raise self._failure(err, records) from err
 
             self._observe(model, None)
-            records.append(AttemptRecord(model, "ok", None, _ms(self._clock() - t0), reason))
+            records.append(
+                AttemptRecord(model, "ok", None, _ms(self._clock() - t0), reason, paced_ms)
+            )
             return LLMResponse(
                 function_calls=out.function_calls,
                 final_json=out.final_json,
