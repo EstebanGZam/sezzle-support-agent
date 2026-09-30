@@ -200,9 +200,21 @@ TPM_MESSAGE = (
     "Rate limit reached for model `openai/gpt-oss-120b` in organization `org_01abcXYZ` "
     "service tier `on_demand` on tokens per minute (TPM): Limit 8000, Used 7000, Requested 2000."
 )
+# The request alone exceeds the per-minute limit: no wait can make it fit.
 TPM_413_MESSAGE = (
     "Request too large for model `openai/gpt-oss-120b` in organization `org_01abcXYZ` "
     "service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 8350, "
+    "please reduce your message size and try again."
+)
+# The request fits the limit; the model's rolling window is what is full.
+TPM_413_SATURATED_MESSAGE = (
+    "Request too large for model `openai/gpt-oss-120b` in organization `org_01abcXYZ` "
+    "service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 6500, "
+    "please reduce your message size and try again."
+)
+# No provider values: the client estimate decides.
+TPM_413_NO_VALUES_MESSAGE = (
+    "Request too large for model `openai/gpt-oss-120b` on tokens per minute (TPM), "
     "please reduce your message size and try again."
 )
 TPD_MESSAGE = (
@@ -741,10 +753,12 @@ def test_413_is_logged_clearly(caplog: pytest.LogCaptureFixture) -> None:
     assert all(KEY not in r.getMessage() for r in caplog.records)
 
 
-def tpm_413(headers: dict[str, str] | None = None) -> httpx.Response:
+def tpm_413(
+    message: str = TPM_413_SATURATED_MESSAGE, headers: dict[str, str] | None = None
+) -> httpx.Response:
     return error(
         413,
-        TPM_413_MESSAGE,
+        message,
         error_type="tokens",
         error_code="rate_limit_exceeded",
         headers=headers,
@@ -773,7 +787,7 @@ def test_413_tpm_with_a_request_within_the_budget_is_a_minute_rate_limit() -> No
 
 def test_413_tpm_honours_retry_after_before_the_next_primary_call() -> None:
     client, server, sleeps, clock = make_client(
-        [tpm_413({"retry-after": "4"}), ok(), ok()], tpm_budget=8000
+        [tpm_413(headers={"retry-after": "4"}), ok(), ok()], tpm_budget=8000
     )
     client.generate(request(deadline=clock.t + 30))
     resp = client.generate(request(deadline=clock.t + 30))
@@ -797,7 +811,9 @@ def test_413_tpm_without_fallback_retries_after_the_window_frees() -> None:
 def test_413_tpm_with_a_request_over_the_budget_stays_bad_request(
     budget: int, caplog: pytest.LogCaptureFixture
 ) -> None:
-    client, server, _, clock = make_client([tpm_413(), ok()], tpm_budget=budget)
+    client, server, _, clock = make_client(
+        [tpm_413(TPM_413_NO_VALUES_MESSAGE), ok()], tpm_budget=budget
+    )
     with (
         caplog.at_level(logging.WARNING, logger="support_agent.llm.groq"),
         pytest.raises(ProviderError) as info,
@@ -814,13 +830,73 @@ def test_413_tpm_with_a_request_over_the_budget_stays_bad_request(
     assert f"GROQ_TPM_BUDGET={budget}" in logged and "bad_request" in logged
 
 
-def test_413_classification_needs_an_estimate_and_a_tpm_message() -> None:
-    assert classify_response(tpm_413(), tpm_budget=8000).kind == "bad_request"
-    assert classify_response(tpm_413(), est_tokens=2000, tpm_budget=8000).kind == (
+def test_413_without_provider_values_falls_back_to_the_estimate() -> None:
+    no_values = tpm_413(TPM_413_NO_VALUES_MESSAGE)
+    assert classify_response(no_values, tpm_budget=8000).kind == "bad_request"
+    assert classify_response(no_values, est_tokens=2000, tpm_budget=8000).kind == (
         "rate_limit_minute"
     )
+    assert classify_response(no_values, est_tokens=9000, tpm_budget=8000).kind == "bad_request"
     too_large = error(413, "Request Entity Too Large")
     assert classify_response(too_large, est_tokens=2000, tpm_budget=8000).kind == "bad_request"
+
+
+def test_413_requested_over_the_provider_limit_is_bad_request_whatever_the_estimate() -> None:
+    # R-02 #2: the provider says the request alone is larger than the limit.
+    err = classify_response(tpm_413(TPM_413_MESSAGE), est_tokens=2000, tpm_budget=8000)
+    assert err.kind == "bad_request"
+    assert "Limit 8000, Requested 8350" in err.message
+    for est, budget in [(None, 8000), (2000, 0), (100, 100000)]:
+        assert classify_response(
+            tpm_413(TPM_413_MESSAGE), est_tokens=est, tpm_budget=budget
+        ).kind == ("bad_request")
+
+
+def test_413_requested_within_the_provider_limit_is_a_minute_rate_limit_whatever_the_estimate() -> (
+    None
+):
+    for est, budget in [(None, 8000), (9000, 8000), (2000, 0)]:
+        err = classify_response(tpm_413(), est_tokens=est, tpm_budget=budget)
+        assert err.kind == "rate_limit_minute"
+        assert "Limit 8000, Requested 6500" in err.message
+    at_limit = TPM_413_SATURATED_MESSAGE.replace("Requested 6500", "Requested 8000")
+    assert classify_response(tpm_413(at_limit), est_tokens=9000, tpm_budget=8000).kind == (
+        "rate_limit_minute"
+    )
+    # Values without a per-minute-limit message are not treated as a full window.
+    body_limit = error(413, "Payload too large: Limit 8000, Requested 6500")
+    assert classify_response(body_limit, est_tokens=2000, tpm_budget=8000).kind == "bad_request"
+
+
+def test_413_requested_over_the_provider_limit_is_never_retried_or_failed_over(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client, server, sleeps, clock = make_client(
+        [tpm_413(TPM_413_MESSAGE), ok(), ok()], tpm_budget=8000
+    )
+    req = request(deadline=clock.t + 180)
+    assert (
+        client.pacer.estimate(_request_chars(to_messages(req.system, req.contents), req), 1024)
+        < 8000
+    )
+    with (
+        caplog.at_level(logging.WARNING, logger="support_agent.llm.groq"),
+        pytest.raises(ProviderError) as info,
+    ):
+        client.generate(req)
+    assert info.value.kind == "bad_request"
+    assert len(server.requests) == 1  # no retry, no fallback, no pacing block
+    assert sleeps == []
+    (attempt,) = info.value.attempts
+    assert (attempt.model, attempt.status, attempt.error_class) == (
+        PRIMARY,
+        "failed",
+        "bad_request",
+    )
+    assert client.pacer.window_free_in(PRIMARY) == 60.0  # released; nothing blocks the model
+    assert client.generate(request(deadline=clock.t + 180)).model_id == PRIMARY
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert "Limit 8000, Requested 8350" in logged and "bad_request" in logged
 
 
 def test_failed_attempts_carry_a_scrubbed_provider_detail() -> None:
@@ -944,6 +1020,50 @@ def test_pacing_wait_beyond_the_deadline_goes_to_the_fallback_unsent() -> None:
         (PRIMARY, "fallback", "rate_limit_minute", 0),
         (FALLBACK, "ok", None, 0),
     ]
+
+
+def groq_default_deadline_s() -> float:
+    return Settings.from_env({"LLM_PROVIDER": "groq", "GROQ_API_KEY": KEY}).case_deadline_s
+
+
+def test_third_call_waits_and_is_sent_when_both_model_windows_are_full() -> None:
+    # R-02 #1: two 5,500-token calls fill both 8,000-token model windows; the third call must
+    # wait (within the default Groq case deadline) and be sent, never fail unsent.
+    deadline_s = groq_default_deadline_s()
+    body = completion([tool_call(SUBMIT_ANSWER, FINAL)], usage=usage(5000, 500))
+    client, server, sleeps, clock = make_client([ok(body)] * 3, tpm_budget=8000)
+
+    assert client.generate(request(deadline=clock.t + deadline_s)).model_id == PRIMARY
+    clock.t += 5
+    # The reviewer's sequence: the primary's pacing wait does not fit what is left of that
+    # case's deadline, so call 2 goes to the fallback unsent to the primary.
+    assert client.generate(request(deadline=clock.t + 30)).model_id == FALLBACK
+    assert sleeps == []
+    clock.t += 5
+    assert client.pacer.used(PRIMARY) == client.pacer.used(FALLBACK) == 5500
+
+    third = client.generate(request(deadline=clock.t + deadline_s))
+    assert server.models_called == [PRIMARY, FALLBACK, PRIMARY]
+    assert [(a.model, a.status, a.error_class, a.paced_ms) for a in third.attempts] == [
+        (PRIMARY, "ok", None, 50000),
+    ]
+    assert sleeps == [pytest.approx(50.0)]
+    assert server.sent_at[-1] == pytest.approx(1060.0)  # as soon as the primary's minute frees
+
+
+def test_a_paced_batch_at_the_default_groq_deadline_sends_every_call() -> None:
+    # Sequential saturating calls (as in a 35-50-case run) wait for the window instead of
+    # being consumed as unsent rate_limit_minute failures.
+    deadline_s = groq_default_deadline_s()
+    body = completion([tool_call(SUBMIT_ANSWER, FINAL)], usage=usage(5000, 500))
+    calls = 12
+    client, server, sleeps, clock = make_client([ok(body)] * calls, tpm_budget=8000)
+    for _ in range(calls):
+        resp = client.generate(request(deadline=clock.t + deadline_s))
+        assert [(a.status, a.error_class) for a in resp.attempts] == [("ok", None)]
+        clock.t += 1
+    assert len(server.requests) == calls  # every call sent exactly once
+    assert all(wait <= 60.0 for wait in sleeps)
 
 
 def test_min_call_interval_spaces_calls() -> None:
