@@ -52,6 +52,7 @@ Supplementary record: this does not belong in the three graded ADRs, though ADR-
   - **Accepted residual risk:** policy text and synthetic order data are processed by a third party under free-plan terms.
   - Only the minimum inference context is sent (system prefix, question, the caller's own tool results) — never credentials, repo contents or development logs.
 - **Would reconsider if:** Groq's terms change (training or retention); ZDR is unavailable to the org and the owner rejects 30-day logs; the free quotas can't complete the evaluation runs; or gpt-oss quality on the eval sets is clearly below Gemini's valid-response behaviour.
+- **Owner confirmation (P-009, 2026-09-29):** `GROQ_API_KEY` configured in the local `.env`; **Zero Data Retention enabled** in Groq Data Controls.
 - **Results after migration:** *to be filled with runs 004+* (do not pre-fill).
 - **Implementation:** first dispatched to Codex under the cross-provider failover policy (Claude was at 96 % usage). Codex hit its own usage limit at startup and produced no work. A reboot then removed the empty worktree. The adapter was implemented by **Claude**, the primary implementer (commits `00d1220`, `8c7d598`, `9088269`; 647 tests green). Its independent review is assigned to **Codex** (R-02), keeping implementer ≠ reviewer.
 

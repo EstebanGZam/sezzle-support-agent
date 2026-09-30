@@ -15,6 +15,8 @@ Required by the brief: "the prompts you used to build (including scaffolding ask
 | P-005 | Owner decisions: model config, architecture approval, AR reconciliation, Gemini credential-provenance investigation, remote-repo gate | lead | `docs/planning/prompts/P-005-owner-final-preparation-decisions.md` | Credential investigation (`docs/reviews/credential-provenance-2026-09-27.md`); A-10 revised (original preserved); OD-15…OD-23; AR statuses; final readiness checklist | Implementation authorized (P-006) |
 | P-006 | Implementation authorization (IP-01 + E-01 onward), execution methodology, credential and publication boundaries | lead | `docs/planning/prompts/P-006-implementation-authorization.md` | Implementation started; real LLM runs gated on owner confirmation of the credential project's data-handling terms | — |
 | P-007 | Billing confirmation (paid tier, prepaid) and authorization of the first real evaluation | lead | `docs/planning/prompts/P-007-billing-confirmation.md` | A-10 resolved; baseline run 001 unblocked | — |
+| P-008 | Owner decision: adopt a free inference provider (Groq investigated first) | lead | `docs/planning/prompts/P-008-free-provider-decision.md` | Research A-028; Groq adapter; OD-26 | — |
+| P-009 | Groq key configured + ZDR enabled | lead | `docs/planning/prompts/P-009-groq-key-zdr-confirmation.md` | Live smoke + run 004 on Groq | — |
 
 ## 2. Development-agent prompts (lead → teammates)
 
