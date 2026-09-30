@@ -35,6 +35,8 @@ from support_agent.llm.groq import (
     SUBMIT_ANSWER,
     GroqClient,
     TokenPacer,
+    _request_chars,
+    classify_response,
     to_messages,
     to_usage,
 )
@@ -186,9 +188,22 @@ def error(
     return httpx.Response(code, json={"error": err}, headers=headers)
 
 
+def without_estimate(attempt: dict[str, Any]) -> dict[str, Any]:
+    """A trace attempt minus ``est_tokens``, after checking it is a positive count."""
+    out = dict(attempt)
+    est = out.pop("est_tokens")
+    assert isinstance(est, int) and est > 0
+    return out
+
+
 TPM_MESSAGE = (
     "Rate limit reached for model `openai/gpt-oss-120b` in organization `org_01abcXYZ` "
     "service tier `on_demand` on tokens per minute (TPM): Limit 8000, Used 7000, Requested 2000."
+)
+TPM_413_MESSAGE = (
+    "Request too large for model `openai/gpt-oss-120b` in organization `org_01abcXYZ` "
+    "service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 8350, "
+    "please reduce your message size and try again."
 )
 TPD_MESSAGE = (
     "Rate limit reached for model `openai/gpt-oss-120b` in organization `org_01abcXYZ` "
@@ -358,7 +373,7 @@ def test_tool_use_failed_answer_is_recovered_as_final_json(tool_mode: str) -> No
     assert resp.raw_model_turn is None
     assert resp.finish_reason == "tool_use_failed"
     assert len(server.requests) == 1
-    assert [a.to_dict() for a in resp.attempts] == [
+    assert [without_estimate(a.to_dict()) for a in resp.attempts] == [
         {
             "model": PRIMARY,
             "reason": "primary",
@@ -392,7 +407,7 @@ def test_tool_use_failed_without_a_valid_answer_is_malformed(generation: Any) ->
     resp = client.generate(request())
     assert resp.malformed and resp.raw_model_turn is None
     assert len(server.requests) == 1  # one attempt: no same-model retry, no fallback
-    assert [a.to_dict() for a in resp.attempts] == [
+    assert [without_estimate(a.to_dict()) for a in resp.attempts] == [
         {
             "model": PRIMARY,
             "reason": "primary",
@@ -706,6 +721,136 @@ def test_413_is_logged_clearly(caplog: pytest.LogCaptureFixture) -> None:
     assert all(KEY not in r.getMessage() for r in caplog.records)
 
 
+def tpm_413(headers: dict[str, str] | None = None) -> httpx.Response:
+    return error(
+        413,
+        TPM_413_MESSAGE,
+        error_type="tokens",
+        error_code="rate_limit_exceeded",
+        headers=headers,
+    )
+
+
+def test_413_tpm_with_a_request_within_the_budget_is_a_minute_rate_limit() -> None:
+    client, server, sleeps, clock = make_client([tpm_413(), ok(), ok()], tpm_budget=8000)
+    resp = client.generate(request(deadline=clock.t + 30))
+    assert server.models_called == [PRIMARY, FALLBACK]  # separate bucket: fallback-eligible
+    assert [(a.model, a.status, a.error_class) for a in resp.attempts] == [
+        (PRIMARY, "fallback", "rate_limit_minute"),
+        (FALLBACK, "ok", None),
+    ]
+    assert sleeps == []
+    # No retry-after: the primary stays blocked until its rolling minute frees, so the next
+    # call within the case deadline goes to the fallback without being sent to the primary.
+    nxt = client.generate(request(deadline=clock.t + 30))
+    assert server.models_called == [PRIMARY, FALLBACK, FALLBACK]
+    assert [(a.model, a.status, a.error_class) for a in nxt.attempts] == [
+        (PRIMARY, "fallback", "rate_limit_minute"),
+        (FALLBACK, "ok", None),
+    ]
+    assert "beyond the case deadline" in (nxt.attempts[0].detail or "")
+
+
+def test_413_tpm_honours_retry_after_before_the_next_primary_call() -> None:
+    client, server, sleeps, clock = make_client(
+        [tpm_413({"retry-after": "4"}), ok(), ok()], tpm_budget=8000
+    )
+    client.generate(request(deadline=clock.t + 30))
+    resp = client.generate(request(deadline=clock.t + 30))
+    assert server.models_called == [PRIMARY, FALLBACK, PRIMARY]
+    assert resp.attempts[0].paced_ms == 4000
+    assert sleeps == [pytest.approx(4.0)]
+
+
+def test_413_tpm_without_fallback_retries_after_the_window_frees() -> None:
+    client, server, _, clock = make_client([tpm_413(), ok()], tpm_budget=8000, fallback_model=None)
+    resp = client.generate(request(deadline=clock.t + 120))
+    assert server.models_called == [PRIMARY, PRIMARY]
+    assert [(a.status, a.error_class) for a in resp.attempts] == [
+        ("retry", "rate_limit_minute"),
+        ("ok", None),
+    ]
+    assert server.sent_at[1] - server.sent_at[0] == pytest.approx(60.0)
+
+
+@pytest.mark.parametrize("budget", [500, 0], ids=["over_budget", "pacing_disabled"])
+def test_413_tpm_with_a_request_over_the_budget_stays_bad_request(
+    budget: int, caplog: pytest.LogCaptureFixture
+) -> None:
+    client, server, _, clock = make_client([tpm_413(), ok()], tpm_budget=budget)
+    with (
+        caplog.at_level(logging.WARNING, logger="support_agent.llm.groq"),
+        pytest.raises(ProviderError) as info,
+    ):
+        client.generate(request(deadline=clock.t + 30))
+    assert info.value.kind == "bad_request"
+    assert len(server.requests) == 1  # no fallback, no retry: it must not loop
+    (attempt,) = info.value.attempts
+    assert (attempt.status, attempt.error_class) == ("failed", "bad_request")
+    assert attempt.est_tokens is not None and attempt.est_tokens > max(budget, 1024)
+    assert f"~{attempt.est_tokens} estimated tokens" in info.value.message
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert f"~{attempt.est_tokens} estimated tokens" in logged
+    assert f"GROQ_TPM_BUDGET={budget}" in logged and "bad_request" in logged
+
+
+def test_413_classification_needs_an_estimate_and_a_tpm_message() -> None:
+    assert classify_response(tpm_413(), tpm_budget=8000).kind == "bad_request"
+    assert classify_response(tpm_413(), est_tokens=2000, tpm_budget=8000).kind == (
+        "rate_limit_minute"
+    )
+    too_large = error(413, "Request Entity Too Large")
+    assert classify_response(too_large, est_tokens=2000, tpm_budget=8000).kind == "bad_request"
+
+
+def test_failed_attempts_carry_a_scrubbed_provider_detail() -> None:
+    leak = f"{TPM_413_MESSAGE} key={KEY} auth=Bearer sk-other-token-42 " + "x" * 400
+    client, _, _, clock = make_client([error(500, leak, error_code="internal_error"), ok()])
+    resp = client.generate(request(deadline=clock.t + 30))
+    failed, succeeded = resp.attempts
+    assert failed.status == "fallback"
+    detail = failed.detail
+    assert detail is not None
+    assert detail.startswith("HTTP 500 internal_error: Request too large for model")
+    for secret in (KEY, "sk-other-token-42", "org_01abcXYZ"):
+        assert secret not in detail
+    assert "org_[REDACTED]" in detail
+    assert len(detail.split(": ", 1)[1]) <= 200
+    assert succeeded.detail is None
+    assert "detail" not in succeeded.to_dict()
+    assert failed.to_dict()["detail"] == detail
+
+
+def test_detail_falls_back_to_the_error_type_and_covers_retries_and_terminal_failures() -> None:
+    client, _, _, clock = make_client(
+        [error(502, "Bad Gateway", error_type="server_error")] * 2, fallback_model=None
+    )
+    with pytest.raises(ProviderError) as info:
+        client.generate(request(deadline=clock.t + 30))
+    assert [(a.status, a.detail) for a in info.value.attempts] == [
+        ("retry", "HTTP 502 server_error: Bad Gateway"),
+        ("failed", "HTTP 502 server_error: Bad Gateway"),
+    ]
+
+
+def test_transport_failures_carry_the_client_side_reason() -> None:
+    client, _, _, _ = make_client([httpx.ReadTimeout("timed out"), ok()])
+    resp = client.generate(request())
+    assert resp.attempts[0].detail == "client timeout (ReadTimeout)"
+    assert resp.attempts[1].detail is None
+
+
+def test_est_tokens_is_the_pacing_estimate_of_every_attempt() -> None:
+    client, _, _, _ = make_client([error(503, "over capacity"), ok()])
+    req = request()
+    expected = client.pacer.estimate(
+        _request_chars(to_messages(req.system, req.contents), req), 1024
+    )
+    resp = client.generate(req)
+    assert [a.est_tokens for a in resp.attempts] == [expected, expected]
+    assert all(a.to_dict()["est_tokens"] == expected for a in resp.attempts)
+
+
 def test_error_messages_hide_the_key_and_organisation_id() -> None:
     leaky = error(429, f"{TPM_MESSAGE} key={KEY}", headers={"retry-after": "1"})
     client, _, _, _ = make_client([leaky], fallback_model=None, max_attempts=1)
@@ -892,6 +1037,27 @@ def test_agent_end_to_end_over_groq_with_trace_pacing() -> None:
     assert tool_reply["status"] == "ok"
     for call in result.trace.to_dict()["llm_calls"]:
         assert call["attempts"][0]["paced_ms"] == 0
+        assert call["attempts"][0]["est_tokens"] > 0
+        assert "detail" not in call["attempts"][0]
+
+
+def test_agent_trace_records_a_post_tool_413_detail_and_estimate() -> None:
+    resources = Resources.load(Settings.from_env({"LLM_PROVIDER": "fake"}))
+    statics = AgentStatics.build(resources)
+    lookup = completion([tool_call("get_my_orders", {}, "call_1")])
+    client, server, _, clock = make_client([ok(lookup), tpm_413(), ok()], tpm_budget=8000)
+    case = Case(id="g1", user_id="u002", question="When is my next payment?")
+    result = answer_case(resources, client, case, statics=statics, clock=clock)
+    assert result.answer == FINAL["answer"]
+    assert server.models_called == [PRIMARY, PRIMARY, FALLBACK]
+    trace = result.trace.to_dict()
+    post_tool = trace["llm_calls"][1]
+    failed, succeeded = post_tool["attempts"]
+    assert failed["error_class"] == "rate_limit_minute"
+    assert failed["detail"].startswith("HTTP 413 rate_limit_exceeded: Request too large")
+    assert failed["est_tokens"] == succeeded["est_tokens"] > 0
+    assert "detail" not in succeeded
+    assert KEY not in result.trace.to_json()
 
 
 def test_agent_trace_records_a_recovered_tool_use_failed_answer() -> None:

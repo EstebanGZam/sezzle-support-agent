@@ -33,11 +33,19 @@
   state of this per-batch client (timestamps and token counts only). A wait that cannot end
   before the case deadline is not taken: the attempt fails as ``rate_limit_minute`` without being
   sent, so the fallback model (a separate quota bucket) is tried.
+- Observability: every trace attempt carries the call's pacing estimate as ``est_tokens`` (for
+  calibration against reported usage); a failed or retried attempt also carries ``detail``,
+  ``HTTP <code> <error.code or type>: <provider message, ≤ 200 chars>`` (or the client-side reason
+  for a transport failure or a refused pacing wait), scrubbed like every error message.
 
 Error classification (``classify_response``), per the §7 table:
 
 - 401/403 → ``auth_billing``; 404 → ``model_not_found``; 408 → ``timeout``.
-- 413 → ``bad_request`` (the request exceeds the body size or the per-minute token limit; logged).
+- 413 → ``rate_limit_minute`` when the message names the per-minute token limit (TPM) and the
+  request's estimated tokens fit ``GROQ_TPM_BUDGET`` (the window, not the request, is full: the
+  model is blocked for ``retry-after``, else until its rolling minute frees, and the fallback
+  model, a separate bucket, is tried); otherwise ``bad_request`` (a body too large, or a request
+  larger than the whole budget, which no wait can fix). Every 413 is logged with the estimate.
 - 429 → ``quota_daily`` when the daily request budget is spent (``x-ratelimit-remaining-requests``
   is ``0``: Groq's request headers are per day) or the message names a per-day limit (TPD/RPD);
   otherwise ``rate_limit_minute``, honouring ``retry-after`` before the next attempt on that model.
@@ -47,8 +55,8 @@ Error classification (``classify_response``), per the §7 table:
   ``server_5xx``.
 - ``finish_reason == "content_filter"`` → ``blocked_safety``.
 
-Error messages are truncated and scrubbed of the key and organisation IDs before they leave this
-module (SEC-13); request/response bodies are never logged.
+Error messages are truncated and scrubbed of the key, bearer tokens and organisation IDs before
+they leave this module (SEC-13); request/response bodies are never logged.
 """
 
 from __future__ import annotations
@@ -60,7 +68,7 @@ import re
 import time
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import httpx
@@ -70,6 +78,7 @@ from support_agent.config import GROQ_PACING_WINDOW_S, ConfigError, Settings
 from support_agent.llm.base import (
     MIN_ATTEMPT_BUDGET_S,
     AttemptOutput,
+    AttemptRecord,
     AttemptRunner,
     FunctionCall,
     LLMRequest,
@@ -102,8 +111,12 @@ _OVERLOAD_CODES = frozenset({498, 503, 504})
 _DAILY_HINT_RE = re.compile(
     r"per[\s_-]?day|daily|\b(?:TPD|RPD)\b|(?:tokens|requests)\s+per\s+day", re.I
 )
+_TPM_HINT_RE = re.compile(r"tokens\s+per\s+minute|\bTPM\b", re.I)
 _ORG_ID_RE = re.compile(r"\borg_[A-Za-z0-9]+")
+_BEARER_RE = re.compile(r"\bBearer\s+[^\s\"',;]+", re.I)
+_GROQ_KEY_RE = re.compile(r"\bgsk_[A-Za-z0-9_-]+")
 _MAX_MESSAGE_CHARS = 300
+_MAX_DETAIL_MESSAGE_CHARS = 200
 # Errors for which Groq did not process the request: its pacing estimate is released.
 _NOT_PROCESSED = frozenset(
     {
@@ -171,12 +184,26 @@ class GroqClient:
         request_chars = _request_chars(messages, req)
         estimate = self.pacer.estimate(request_chars, max_tokens)
         tickets: dict[str, _Ticket] = {}
+        # One entry per transport attempt (the runner calls ``pace`` once before each).
+        notes: list[dict[str, Any]] = []
 
         def pace(model: str, deadline: float | None) -> float:
-            waited, tickets[model] = self.pacer.acquire(model, estimate, deadline)
+            notes.append({"est_tokens": estimate})
+            try:
+                waited, tickets[model] = self.pacer.acquire(model, estimate, deadline)
+            except ProviderError as err:
+                notes[-1]["detail"] = _sanitize(err.message, self._secret)
+                raise
             return waited
 
         def attempt(model: str, timeout_s: float) -> AttemptOutput:
+            try:
+                return send(model, timeout_s)
+            except ProviderError as err:
+                notes[-1].setdefault("detail", _sanitize(err.message, self._secret))
+                raise
+
+        def send(model: str, timeout_s: float) -> AttemptOutput:
             ticket = tickets.pop(model)
             body = self.build_body(req, model, messages, max_tokens)
             try:
@@ -195,18 +222,29 @@ class GroqClient:
                 if _is_tool_use_failed(response):
                     # The model's turn failed Groq's tool-call validation: not a provider error.
                     return recover_tool_use_failed(response, req.response_schema)
-                err = classify_response(response, model=model, secret=self._secret)
+                notes[-1]["detail"] = error_detail(response, self._secret)
+                err = classify_response(
+                    response,
+                    model=model,
+                    secret=self._secret,
+                    est_tokens=estimate,
+                    tpm_budget=self._settings.tpm_budget,
+                )
                 if err.kind in _NOT_PROCESSED:
                     self.pacer.release(ticket)
                 if err.kind == "rate_limit_minute":
-                    self.pacer.block(model, _retry_after_s(response))
+                    wait_s = _retry_after_s(response)
+                    if wait_s is None and response.status_code == 413:
+                        wait_s = self.pacer.window_free_in(model)
+                    self.pacer.block(model, wait_s)
                 if response.status_code == 413:
                     logger.warning(
                         "Groq rejected a request as too large (HTTP 413) for model %s: "
-                        "~%d estimated tokens against GROQ_TPM_BUDGET=%d",
+                        "~%d estimated tokens against GROQ_TPM_BUDGET=%d; classified as %s",
                         model,
                         estimate,
                         self._settings.tpm_budget,
+                        err.kind,
                     )
                 raise err
 
@@ -224,7 +262,12 @@ class GroqClient:
             self.pacer.settle(ticket, out.usage, request_chars)
             return out
 
-        return self.runner.run(attempt, deadline=req.deadline, pace=pace)
+        try:
+            response = self.runner.run(attempt, deadline=req.deadline, pace=pace)
+        except ProviderError as err:
+            attempts = _annotate(err.attempts, notes)
+            raise err.with_attempts(attempts, fallback_used=err.fallback_used) from err
+        return replace(response, attempts=_annotate(response.attempts, notes))
 
     def build_body(
         self,
@@ -344,6 +387,15 @@ class TokenPacer:
         if seconds is not None and seconds > 0:
             until = self._clock() + seconds
             self._not_before[model] = max(self._not_before.get(model, until), until)
+
+    def window_free_in(self, model: str) -> float:
+        """Seconds until every entry of ``model``'s rolling window has left it (a full window
+        when it is empty: the usage Groq counted is not visible here)."""
+        now = self._clock()
+        window = self._window(model, now)
+        if not window:
+            return self.window_s
+        return max(t.started for t in window) + self.window_s - now
 
     def _ready_at(self, model: str, tokens: int, now: float) -> float:
         ready = max(now, self._not_before.get(model, now))
@@ -580,9 +632,16 @@ def _count(value: Any) -> int:
 
 
 def classify_response(
-    response: httpx.Response, *, model: str | None = None, secret: str | None = None
+    response: httpx.Response,
+    *,
+    model: str | None = None,
+    secret: str | None = None,
+    est_tokens: int | None = None,
+    tpm_budget: int = 0,
 ) -> ProviderError:
-    """Map a non-200 response to a ``ProviderError`` (see module doc)."""
+    """Map a non-200 response to a ``ProviderError`` (see module doc). ``est_tokens`` and
+    ``tpm_budget`` decide whether a 413 per-minute-limit rejection is a full window
+    (``rate_limit_minute``) or a request no window can hold (``bad_request``)."""
     code = response.status_code
     error_type, error_message = _error_fields(response)
     message = f"HTTP {code} {error_type}: {error_message}"
@@ -593,8 +652,17 @@ def classify_response(
     elif code == 408:
         kind = "timeout"
     elif code == 413:
-        kind = "bad_request"
-        message = f"request too large (body or per-minute token limit); {message}"
+        estimate = f"~{est_tokens} estimated tokens" if est_tokens is not None else "no estimate"
+        budget = f"GROQ_TPM_BUDGET={tpm_budget}"
+        if _TPM_HINT_RE.search(error_message) and _fits_budget(est_tokens, tpm_budget):
+            kind = "rate_limit_minute"
+            message = f"per-minute token window full ({estimate} <= {budget}); {message}"
+        else:
+            kind = "bad_request"
+            message = (
+                f"request too large (body or per-minute token limit; {estimate}, {budget}); "
+                f"{message}"
+            )
     elif code == 429:
         kind = "quota_daily" if _is_daily_limit(response, error_message) else "rate_limit_minute"
     elif code in _OVERLOAD_CODES:  # before the 4xx range: 498 is a capacity signal
@@ -604,6 +672,35 @@ def classify_response(
     else:
         kind = "server_5xx"
     return provider_error(kind, _sanitize(message, secret), model=model)
+
+
+def _fits_budget(est_tokens: int | None, tpm_budget: int) -> bool:
+    return est_tokens is not None and tpm_budget > 0 and est_tokens <= tpm_budget
+
+
+def error_detail(response: httpx.Response, secret: str | None = None) -> str:
+    """``HTTP <code> <error.code or type>: <message>`` for the trace; scrubbed, message ≤ 200."""
+    error = _error_object(response)
+    label = str(error.get("code") or error.get("type") or "")
+    message = _sanitize(str(error.get("message") or ""), secret, _MAX_DETAIL_MESSAGE_CHARS)
+    head = f"HTTP {response.status_code} {label}".rstrip()
+    return _sanitize(f"{head}: {message}" if message else head, secret)
+
+
+def _annotate(
+    records: Sequence[AttemptRecord], notes: Sequence[Mapping[str, Any]]
+) -> tuple[AttemptRecord, ...]:
+    """Attach each attempt's ``est_tokens`` and, unless it succeeded, its ``detail``."""
+    if len(records) != len(notes):  # defensive: the runner paces once per attempt
+        return tuple(records)
+    return tuple(
+        replace(
+            record,
+            est_tokens=note.get("est_tokens"),
+            detail=None if record.status == "ok" else note.get("detail"),
+        )
+        for record, note in zip(records, notes, strict=True)
+    )
 
 
 def _is_daily_limit(response: httpx.Response, error_message: str) -> bool:
@@ -647,9 +744,12 @@ def _retry_after_s(response: httpx.Response) -> float | None:
     return value if math.isfinite(value) and value > 0 else None
 
 
-def _sanitize(message: str, secret: str | None) -> str:
+def _sanitize(message: str, secret: str | None, limit: int = _MAX_MESSAGE_CHARS) -> str:
+    """Scrub the key, bearer tokens, Groq-style keys and organisation IDs, then truncate."""
     if secret:
         message = message.replace(secret, "[REDACTED]")
+    message = _BEARER_RE.sub("Bearer [REDACTED]", message)
+    message = _GROQ_KEY_RE.sub("gsk_[REDACTED]", message)
     message = _ORG_ID_RE.sub("org_[REDACTED]", message)
     message = " ".join(message.split())
-    return message[:_MAX_MESSAGE_CHARS]
+    return message[:limit]
