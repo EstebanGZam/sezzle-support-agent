@@ -53,6 +53,9 @@ DEFAULT_MAX_ATTEMPTS = 3
 # One absolute wall-clock budget per case, shared by every semantic call and transport attempt
 # (architecture §7 "case deadline"); ≥ 2x the Gemini minimum so a timeout can be retried once.
 DEFAULT_CASE_DEADLINE_S = 30.0
+# Groq with pacing on: a paced call may wait up to a full window before it is sent, and a case can
+# make more than one semantic call (architecture §8 "Eval runs"), so the default deadline is wider.
+DEFAULT_GROQ_PACED_CASE_DEADLINE_S = 180.0
 DEFAULT_MAX_OUTPUT_TOKENS = 600
 # gpt-oss counts reasoning tokens in ``max_completion_tokens``, so Groq needs more headroom.
 DEFAULT_GROQ_MAX_OUTPUT_TOKENS = 1024
@@ -205,23 +208,31 @@ class Settings:
                 f"({ignored}). Set it in .env or use LLM_PROVIDER=fake for offline runs."
             )
 
-        thinking_level = _get(env, "GEMINI_THINKING_LEVEL", DEFAULT_THINKING_LEVEL).lower()
-        if thinking_level not in THINKING_LEVELS:
-            raise ConfigError(
-                f"GEMINI_THINKING_LEVEL must be one of {sorted(THINKING_LEVELS)}, "
-                f"got {thinking_level!r}"
-            )
+        # Provider-specific knobs are read only for the active provider; an inactive provider's
+        # variables are never parsed (a stale value cannot block startup) and keep inert defaults.
+        thinking_level = DEFAULT_THINKING_LEVEL
+        if provider == "gemini":
+            thinking_level = _get(env, "GEMINI_THINKING_LEVEL", DEFAULT_THINKING_LEVEL).lower()
+            if thinking_level not in THINKING_LEVELS:
+                raise ConfigError(
+                    f"GEMINI_THINKING_LEVEL must be one of {sorted(THINKING_LEVELS)}, "
+                    f"got {thinking_level!r}"
+                )
 
-        reasoning_effort = _get(env, "GROQ_REASONING_EFFORT", DEFAULT_REASONING_EFFORT).lower()
-        if reasoning_effort not in REASONING_EFFORTS:
-            raise ConfigError(
-                f"GROQ_REASONING_EFFORT must be one of {sorted(REASONING_EFFORTS)}, "
-                f"got {reasoning_effort!r}"
+        reasoning_effort = DEFAULT_REASONING_EFFORT
+        tpm_budget = DEFAULT_GROQ_TPM_BUDGET
+        min_call_interval_s = DEFAULT_GROQ_MIN_CALL_INTERVAL_S
+        if provider == "groq":
+            reasoning_effort = _get(env, "GROQ_REASONING_EFFORT", DEFAULT_REASONING_EFFORT).lower()
+            if reasoning_effort not in REASONING_EFFORTS:
+                raise ConfigError(
+                    f"GROQ_REASONING_EFFORT must be one of {sorted(REASONING_EFFORTS)}, "
+                    f"got {reasoning_effort!r}"
+                )
+            tpm_budget = _non_negative_int(env, "GROQ_TPM_BUDGET", DEFAULT_GROQ_TPM_BUDGET)
+            min_call_interval_s = _non_negative_float(
+                env, "GROQ_MIN_CALL_INTERVAL_S", DEFAULT_GROQ_MIN_CALL_INTERVAL_S
             )
-        tpm_budget = _non_negative_int(env, "GROQ_TPM_BUDGET", DEFAULT_GROQ_TPM_BUDGET)
-        min_call_interval_s = _non_negative_float(
-            env, "GROQ_MIN_CALL_INTERVAL_S", DEFAULT_GROQ_MIN_CALL_INTERVAL_S
-        )
 
         timeout_s = _positive_float(env, "LLM_TIMEOUT_S", DEFAULT_TIMEOUT_S)
         if provider == "gemini" and timeout_s < GEMINI_MIN_TIMEOUT_S:
@@ -231,17 +242,29 @@ class Settings:
             )
             timeout_s = GEMINI_MIN_TIMEOUT_S
 
-        case_deadline_s = _positive_float(env, "CASE_DEADLINE_S", DEFAULT_CASE_DEADLINE_S)
+        # Longest client-side pacing wait before a Groq call: a full TPM window, or the minimum
+        # interval between calls (0 when pacing is off or the provider is not Groq).
+        max_pacing_wait_s = 0.0
+        if provider == "groq":
+            max_pacing_wait_s = max(
+                GROQ_PACING_WINDOW_S if tpm_budget > 0 else 0.0, min_call_interval_s
+            )
+        default_deadline_s = (
+            DEFAULT_GROQ_PACED_CASE_DEADLINE_S if max_pacing_wait_s > 0 else DEFAULT_CASE_DEADLINE_S
+        )
+        case_deadline_s = _positive_float(env, "CASE_DEADLINE_S", default_deadline_s)
         if case_deadline_s < timeout_s:
             warnings.append(
                 f"CASE_DEADLINE_S={case_deadline_s:g} is below LLM_TIMEOUT_S={timeout_s:g}; "
                 f"every attempt is capped by the case deadline"
             )
-        if provider == "groq" and tpm_budget and case_deadline_s < GROQ_PACING_WINDOW_S:
+        if max_pacing_wait_s > 0 and case_deadline_s < max_pacing_wait_s + timeout_s:
             warnings.append(
-                f"CASE_DEADLINE_S={case_deadline_s:g} is below the {GROQ_PACING_WINDOW_S:g} s "
-                f"TPM pacing window; a paced call that cannot start before the case deadline "
-                f"fails as rate_limit_minute. Raise CASE_DEADLINE_S for paced runs"
+                f"CASE_DEADLINE_S={case_deadline_s:g} is below one Groq pacing wait "
+                f"({max_pacing_wait_s:g} s) plus one attempt (LLM_TIMEOUT_S={timeout_s:g}); "
+                f"a paced call that cannot start before the case deadline fails as "
+                f"rate_limit_minute without being sent. Unset CASE_DEADLINE_S (default "
+                f"{DEFAULT_GROQ_PACED_CASE_DEADLINE_S:g} s for paced Groq runs) or raise it"
             )
 
         fake_script = _get(env, "FAKE_LLM_SCRIPT", "")

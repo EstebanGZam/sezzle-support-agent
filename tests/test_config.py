@@ -367,11 +367,51 @@ def test_groq_pacing_can_be_disabled():
     assert (s.tpm_budget, s.min_call_interval_s, s.warnings) == (0, 0.0, ())
 
 
-def test_groq_short_case_deadline_with_pacing_warns():
+def test_groq_paced_case_deadline_defaults_to_180_without_warning():
     s = Settings.from_env(groq_env())
+    assert (s.tpm_budget, s.case_deadline_s, s.warnings) == (8000, 180.0, ())
+    # Empty means unset, like every other variable.
+    assert Settings.from_env(groq_env(CASE_DEADLINE_S="")).case_deadline_s == 180.0
+    # Min-interval pacing alone also counts as paced.
+    s = Settings.from_env(groq_env(GROQ_TPM_BUDGET="0", GROQ_MIN_CALL_INTERVAL_S="2"))
+    assert (s.case_deadline_s, s.warnings) == (180.0, ())
+
+
+def test_groq_unpaced_case_deadline_keeps_the_general_default():
+    s = Settings.from_env(groq_env(GROQ_TPM_BUDGET="0"))
+    assert (s.case_deadline_s, s.warnings) == (30.0, ())
+
+
+def test_non_groq_providers_keep_the_general_case_deadline_default():
+    assert Settings.from_env(gemini_env()).case_deadline_s == 30.0
+    assert Settings.from_env({"LLM_PROVIDER": "fake"}).case_deadline_s == 30.0
+
+
+@pytest.mark.parametrize("deadline", ["30", "69.9"])
+def test_groq_explicit_case_deadline_below_a_pacing_window_plus_an_attempt_warns(deadline):
+    s = Settings.from_env(groq_env(CASE_DEADLINE_S=deadline))
+    assert s.case_deadline_s == float(deadline)  # kept: a warning, not an error
     assert len(s.warnings) == 1
-    assert "CASE_DEADLINE_S=30" in s.warnings[0] and "pacing" in s.warnings[0]
-    assert Settings.from_env(groq_env(CASE_DEADLINE_S="60")).warnings == ()
+    warning = s.warnings[0]
+    assert f"CASE_DEADLINE_S={float(deadline):g}" in warning
+    assert "pacing wait (60 s)" in warning and "LLM_TIMEOUT_S=10" in warning
+    assert "without being sent" in warning
+
+
+def test_groq_explicit_case_deadline_covering_a_window_and_an_attempt_is_quiet():
+    assert Settings.from_env(groq_env(CASE_DEADLINE_S="70")).warnings == ()
+    s = Settings.from_env(groq_env(CASE_DEADLINE_S="70", LLM_TIMEOUT_S="15"))
+    assert len(s.warnings) == 1 and "LLM_TIMEOUT_S=15" in s.warnings[0]
+    s = Settings.from_env(groq_env(CASE_DEADLINE_S="5", GROQ_TPM_BUDGET="0"))
+    assert s.case_deadline_s == 5.0 and len(s.warnings) == 1
+    assert "below LLM_TIMEOUT_S" in s.warnings[0]  # only the general warning when unpaced
+
+
+def test_groq_min_interval_only_pacing_warns_against_its_own_wait():
+    env = groq_env(GROQ_TPM_BUDGET="0", GROQ_MIN_CALL_INTERVAL_S="20")
+    assert Settings.from_env({**env, "CASE_DEADLINE_S": "30"}).warnings == ()
+    (warning,) = Settings.from_env({**env, "CASE_DEADLINE_S": "25"}).warnings
+    assert "pacing wait (20 s)" in warning
 
 
 def test_gemini_default_output_tokens_unchanged_by_groq_default():
@@ -394,3 +434,47 @@ def test_gemini_default_output_tokens_unchanged_by_groq_default():
 def test_groq_invalid_values_raise_config_error(var, value):
     with pytest.raises(ConfigError, match=var):
         Settings.from_env(groq_env(**{var: value}))
+
+
+# --- provider-scoped knobs (R-02 #4): an inactive provider's settings are never parsed ---------
+
+INVALID_GROQ_KNOBS = {
+    "GROQ_REASONING_EFFORT": "extreme",
+    "GROQ_TPM_BUDGET": "not-a-number",
+    "GROQ_MIN_CALL_INTERVAL_S": "-3",
+}
+INVALID_GEMINI_KNOBS = {"GEMINI_THINKING_LEVEL": "extreme"}
+
+
+def test_gemini_ignores_invalid_groq_knobs():
+    s = Settings.from_env(gemini_env(**INVALID_GROQ_KNOBS))
+    assert (s.provider, s.api_key.reveal()) == ("gemini", FAKE_KEY)
+    assert (s.reasoning_effort, s.tpm_budget, s.min_call_interval_s) == ("low", 8000, 0.0)
+    assert (s.case_deadline_s, s.warnings) == (30.0, ())
+
+
+def test_groq_ignores_invalid_gemini_knobs():
+    s = Settings.from_env(groq_env(**INVALID_GEMINI_KNOBS))
+    assert (s.provider, s.thinking_level, s.warnings) == ("groq", "minimal", ())
+
+
+def test_fake_ignores_invalid_gemini_and_groq_knobs():
+    s = Settings.from_env({"LLM_PROVIDER": "fake", **INVALID_GROQ_KNOBS, **INVALID_GEMINI_KNOBS})
+    assert (s.thinking_level, s.reasoning_effort) == ("minimal", "low")
+    assert (s.tpm_budget, s.min_call_interval_s, s.case_deadline_s) == (8000, 0.0, 30.0)
+    assert s.warnings == ()
+
+
+def test_active_provider_knobs_are_still_validated():
+    with pytest.raises(ConfigError, match="GEMINI_THINKING_LEVEL"):
+        Settings.from_env(gemini_env(**INVALID_GEMINI_KNOBS))
+    for var, value in INVALID_GROQ_KNOBS.items():
+        with pytest.raises(ConfigError, match=var):
+            Settings.from_env(groq_env(**{var: value}))
+
+
+def test_inactive_knobs_do_not_leak_into_the_active_settings():
+    s = Settings.from_env(gemini_env(GROQ_REASONING_EFFORT="high", GROQ_TPM_BUDGET="100"))
+    assert (s.reasoning_effort, s.tpm_budget) == ("low", 8000)
+    s = Settings.from_env(groq_env(GEMINI_THINKING_LEVEL="high"))
+    assert s.thinking_level == "minimal"
