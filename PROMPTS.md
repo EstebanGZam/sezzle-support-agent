@@ -2,7 +2,7 @@
 
 Required by the brief: "the prompts you used to build (including scaffolding asks) and the prompts inside your system". Exact texts are stored verbatim under `docs/planning/prompts/` and are linked here, not paraphrased. Each record gives: ID · purpose · tool/agent · exact prompt · context · expected · observed · files · commit · follow-up.
 
-> Status: **implementation in progress** (authorized by P-006). Sections 3–4 fill in during the build. Prompts P-001…P-004 and A-000…A-011 predate the timed build; the owner manages assessment time (A-11).
+> Status: implementation and evaluation phases logged below; see `ITERATION.md` for run outcomes. Prompts P-001…P-004 and A-000…A-011 predate the timed build; the owner manages assessment time (A-11).
 
 ## 1. Planning prompts (owner → lead)
 
@@ -30,6 +30,34 @@ Required by the brief: "the prompts you used to build (including scaffolding ask
 | A-011 | Independent review of the SDD preparation package | codex | `docs/planning/prompts/agents/A-011-spec-package-review.task.md` | Verdict "not ready": 1 blocker, 11 major, 1 minor → all resolved or escalated to owner (`docs/reviews/R-00-resolution.md`) | `docs/reviews/R-00-spec-package.md` |
 | A-012 | Apply review fixes to evaluation-owned files (holdout leak, canonical trace, dev regexes) | claude | `docs/planning/prompts/agents/A-012-eval-fixes.task.md` | see `specs/evaluation.md` changelog | `specs/evaluation.md`, `cases/adversarial_dev.jsonl`, holdout (outside repo) |
 | IP-01… | Implementation prompts (to be dispatched after authorization) | per `docs/implementation-prompts.md` | as sent, logged here at dispatch time | — | — |
+
+### Build-phase dispatches (exact text in the linked files)
+| ID | Purpose | Exact prompt |
+|---|---|---|
+| A-013 | IP-01 scaffold + config | `docs/planning/prompts/agents/A-013-impl-IP-01.task.md` |
+| A-014 | E-01 scorer (evaluation agent; ran on Codex) | `docs/planning/prompts/agents/A-014-eval-E-01.task.md` |
+| A-015 | IP-02/IP-03 resources, facts, scoped tool | `docs/planning/prompts/agents/A-015-impl-IP-02-IP-03.task.md` |
+| A-016 | Recovery handoff IP-02/03 (Claude limit) | `docs/planning/prompts/agents/A-016-impl-recovery-IP-02-IP-03.task.md` |
+| A-017 | IP-04 LLM protocol, fake, Gemini adapter | `docs/planning/prompts/agents/A-017-impl-IP-04.task.md` |
+| A-018 | IP-05 prompts + guards | `docs/planning/prompts/agents/A-018-impl-IP-05.task.md` |
+| A-019 | Recovery handoff IP-05 (session limit) | `docs/planning/prompts/agents/A-019-impl-recovery-IP-05.task.md` |
+| A-020 | IP-06 agent loop, routing, trace, CLI | `docs/planning/prompts/agents/A-020-impl-IP-06.task.md` |
+| A-021 | Fix: Gemini 10 s minimum deadline (found by live smoke) | `docs/planning/prompts/agents/A-021-impl-fix-timeout.task.md` |
+| A-022 | Codex review R-01 | `docs/planning/prompts/agents/A-022-review-R-01.task.md` |
+| A-023 | Fix R-01 findings 1-4,6 | `docs/planning/prompts/agents/A-023-impl-fix-R-01.task.md` |
+| A-024 | Fix R-01 finding 5 (scorer labels) | `docs/planning/prompts/agents/A-024-evals-fix-R-01.task.md` |
+| A-025 | Recovery handoff R-01 impl fixes | `docs/planning/prompts/agents/A-025-impl-recovery-R-01.task.md` |
+| A-026 | Recovery handoff R-01 eval fixes | `docs/planning/prompts/agents/A-026-evals-recovery-R-01.task.md` |
+| A-027 | Iteration 1: overload failover + primary cooldown | `docs/planning/prompts/agents/A-027-impl-iter1-resilience.task.md` |
+| A-028 | Free-provider research | `docs/planning/prompts/agents/A-028-free-provider-research.task.md` |
+| A-029 | Iteration 2: system prompt v2 | `docs/planning/prompts/agents/A-029-impl-iter2-prompt-v2.task.md` |
+| A-030 | Groq adapter | `docs/planning/prompts/agents/A-030-impl-groq-adapter.task.md` |
+| A-031 | Failover handoff Groq adapter (Codex limit) | `docs/planning/prompts/agents/A-031-impl-groq-adapter-failover.task.md` |
+| A-032 | Codex review R-02 (Groq) | `docs/planning/prompts/agents/A-032-review-R-02-groq.task.md` |
+| A-033 | Fix: Groq tool_use_failed recovery | `docs/planning/prompts/agents/A-033-impl-groq-tool-use-failed.task.md` |
+| A-034 | Fix: Groq 413 classification + provider error detail | `docs/planning/prompts/agents/A-034-impl-groq-413-observability.task.md` |
+| A-035 | Fix: Groq output_parse_failed recovery | `docs/planning/prompts/agents/A-035-impl-groq-output-parse-failed.task.md` |
+| A-036 | Fix R-02 findings 1,2,4 | `docs/planning/prompts/agents/A-036-impl-fix-R-02.task.md` |
 
 ## 3. System prompts (inside the assistant)
 
