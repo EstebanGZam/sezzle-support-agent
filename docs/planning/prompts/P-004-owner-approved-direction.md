@@ -1,6 +1,5 @@
 # P-004 — Owner-approved technical direction & SDD preparation phase (verbatim, user → lead)
 
-- Date: 2026-09-27
 - Tool/agent: Claude Code (lead orchestrator, Opus 5.5)
 - Category: Planning prompt — **owner decision record** (these decisions are owner-approved, not agent-approved)
 

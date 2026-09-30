@@ -1,4 +1,4 @@
-# Credential Provenance Investigation — Gemini smoke tests (2026-09-27)
+# Credential Provenance Investigation — Gemini smoke tests
 
 Requested by the owner (P-005 §1, §10). Uses existing evidence and non-secret metadata only. **No credential value is shown anywhere.** Fingerprints are the first 12 hex characters of SHA-256 over the key string, which is not reversible. No new API calls were made for this investigation.
 
@@ -18,14 +18,13 @@ Process ancestry (variable names only):
 |---|---|
 | tool shell (bash) | yes |
 | `claude` (lead session) | yes |
-| `tmux: server` (started 2026-09-27 18:29:26) | yes |
+| terminal-multiplexer server that launched the session | yes |
 | parent `systemd --user` / `systemd` | environ not readable |
 
 Other sources checked:
 - `tmux show-environment -g` lists `GEMINI_API_KEY`. It is in the **tmux global environment**, so every Orchestrator teammate pane inherits it.
 - Not defined in `~/.bashrc`, `~/.profile`, `~/.bash_profile`, `~/.zshrc`, `/etc/environment`, `/etc/profile(.d)`, or `~/.config/environment.d`. It is not in the systemd user environment.
 - **Most likely origin:** exported in the terminal that launched the tmux/orchestrator session, or set via `tmux set-environment`. The exact origin can't be determined from files. [ASSUMPTION]
-- It is **not** the key stored in another local project that references the same variable name (`…/aiops-bot/.env`, fingerprint `ba235477e643` ≠ `53408af16a25`).
 - **Owner check (local, never paste the key):** `printf %s "$YOUR_KEY" | sha256sum | cut -c1-12`. A match with `53408af16a25` means your validated key is the same credential the agents used.
 
 ## 3. What the evidence does and does not show

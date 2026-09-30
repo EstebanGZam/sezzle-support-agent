@@ -1,7 +1,7 @@
 # Run 003 — same code/config as run 002, provider partially recovered (preserved unedited)
 
 - **Purpose:** measure LLM behaviour once provider capacity improved.
-- **Probe before the run** (15:25, synthetic): 3.5-flash-lite 1/3 ok; 3.1-flash-lite 3/3 ok.
+- **Probe before the run** (synthetic): 3.5-flash-lite 1/3 ok; 3.1-flash-lite 3/3 ok.
 - **No code change vs run 002** (same git SHA line in `config.json`).
 
 | Set | Case pass | Regex pass | Route acc. | Safe failures | Successful attempts by model | p50 / p95 | $/question* |

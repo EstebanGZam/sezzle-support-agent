@@ -1,9 +1,8 @@
 # P-008 — Owner decision: investigate and adopt a free inference provider (verbatim, user → lead)
 
-- Date: 2026-09-28
 - Tool/agent: Claude Code (lead orchestrator, Opus 5.5)
 - Category: Planning prompt — **owner decision record**
-- Note: the same message ended with a line `bash /tmp/claude-1000/dispatch-rg.sh`, outside the quoted brief. The lead inspected that script: it dispatches an agent on an unrelated project. It was **not executed**, pending the owner's confirmation.
+- Note: the same message ended with an unrelated shell command for a different project, outside the quoted brief. It was **not executed** and is omitted here.
 
 ---
 

@@ -1,6 +1,5 @@
 # P-001 — Master advisory prompt (verbatim, user → lead)
 
-- Date: 2026-09-27
 - Tool/agent: Claude Code (lead orchestrator, Opus 5.5)
 - Category: Planning prompt
 - Note: re-submitted verbatim a second time after an account `/login` (logged as P-002; no re-run performed).

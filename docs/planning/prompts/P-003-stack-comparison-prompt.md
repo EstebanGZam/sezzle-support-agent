@@ -1,6 +1,5 @@
 # P-003 — Technology stack comparison prompt (verbatim, user → lead)
 
-- Date: 2026-09-27
 - Tool/agent: Claude Code (lead orchestrator, Opus 5.5)
 - Category: Planning prompt
 

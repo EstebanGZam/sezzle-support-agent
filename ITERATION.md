@@ -2,7 +2,32 @@
 
 What each run measured, what failed and why (by taxonomy), what changed, and the delta. Runs are in `evals/runs/` and are never edited; each run folder has `NOTES.md`, `score.md` and `config.json` (code SHA, `PROMPT_VERSION`, models, credential fingerprint).
 
-> Status: **in progress.** The final section (first vs final run, holdout) is completed at the end.
+
+## At a glance — first run vs final run (visible cases)
+
+| | First run (`evals/runs/001_baseline/golden`) | Final run (`evals/runs/005_groq_prompt_v2/golden`) |
+|---|---|---|
+| Provider / model | Gemini `gemini-3.5-flash-lite` (fallback 3.1) | Groq `openai/gpt-oss-120b` (fallback 20b) |
+| System prompt | v1 (`3103d85377df1a31`) | v2 (`e1143a2c8857656f`) |
+| Case pass (regex + route) | **1/10** | **7/10** |
+| Route accuracy | 4/10 | 8/10 |
+| Safe failures | 10/10 (provider 503/504) | 1/10 (`output_parse_failed`, since recovered in the adapter) |
+
+**What the first run got wrong:**
+- Every case hit provider overload (503/504), and our retry policy never reached the fallback model (§1).
+- Once answers came through (runs 003/004), the failures on valid answers clustered into four classes (§2):
+  - OVER_ESCALATION on definitive policy answers;
+  - ROUTE_MISS from tool over-use or under-use;
+  - GROUNDING_MISS where the deciding policy consequence was omitted;
+  - vague hand-off wording.
+
+**What changed and why:**
+1. **Iteration 1 — retry policy:** overload now fails over immediately to the fallback, with a primary-health cooldown (fixed a real defect: fallback usage went from 0 % to 100 %).
+2. **Provider move to Groq** (owner decision OD-26, after a provider-wide incident). This brought valid answers from 14/35 to 29/35 (runs 003 → 004).
+3. **Iteration 2 — prompt v2:** one rule per behaviour class. Golden went 6 → 7. The targeted classes improved on dev (d09, d10), but dev ran mostly on gpt-oss-20b after quota ran out, so the net effect there is confounded (§3).
+4. **Adapter fixes** for Groq-specific errors (`tool_use_failed`, `output_parse_failed`, 413): the model's answer is recovered from `failed_generation` and still validated, turning spurious safe failures into validated answers.
+
+**Caveat:** the final golden run predates the last two adapter-only fixes (`output_parse_failed` recovery; R-02 pacing/413/config fixes). No behaviour-relevant code changed afterwards; the post-fix dev run is `005/adversarial_dev`.
 
 ## 1. Infrastructure incident — kept separate from application behaviour
 

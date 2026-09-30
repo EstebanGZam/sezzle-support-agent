@@ -4,7 +4,7 @@ Source of truth for **what** the system must do. Design rationale lives in `DECI
 
 **Provenance tags — never mix them up:**
 - **SEZ-*** — official Sezzle requirement, quoted/located in `assessment/PROMPT.md`, `assessment/SUBMISSION.md`, `data/policies/*`, or `cases/golden_visible.jsonl`.
-- **OWN-*** — engineering choice **approved by the project owner** on 2026-09-27 (`docs/planning/prompts/P-004-owner-approved-direction.md`). Not a Sezzle requirement.
+- **OWN-*** — engineering choice **approved by the project owner** (`docs/planning/prompts/P-004-owner-approved-direction.md`). Not a Sezzle requirement.
 - **SEC-*** — security requirements derived from SEZ + OWN (source listed per row).
 
 Agents MUST NOT change a requirement to fit their code. Changes require an explicit owner decision recorded in `docs/decision-log.md`.

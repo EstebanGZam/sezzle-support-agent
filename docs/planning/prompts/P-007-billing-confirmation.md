@@ -1,6 +1,5 @@
 # P-007 — Owner billing confirmation & authorization of the first real evaluation (verbatim, user → lead)
 
-- Date: 2026-09-28
 - Tool/agent: Claude Code (lead orchestrator, Opus 5.5)
 - Category: Planning prompt — **owner decision record**
 

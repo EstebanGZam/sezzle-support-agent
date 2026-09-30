@@ -25,7 +25,7 @@ LLM-powered shopper-support assistant for the Sezzle take-home. Contract: `pytho
 - **Owner approval is required** for: new dependencies beyond `specs/tasks.md` T-01, changing a requirement/ADR, adding tools/capabilities, network/LLM calls with real keys, pushing to any remote.
 - The LLM answers; code constrains (ADR-1). Do not write code that produces substantive policy/order answers without the model. The only canned text is the safe-failure message (SEC-10).
 - **No overfitting:** never put golden/adversarial case IDs, questions, or case-specific strings in code or prompts. Do not tune to individual cases.
-- **Never read `/home/esteban/Documents/Sezzle/holdout/`** (held-out eval set). Only the evaluation agent copies it in, for the final run.
+- **Never read the held-out case set** (kept outside this repository; not part of the submission). Only the evaluation agent copies it in, for the final run.
 - Tools are read-only and scoped by the harness `user_id` (closure). Never add a `user_id` tool parameter or any write-capable tool.
 - Use the frozen `today` from `data/orders.json`, never the system clock.
 - Secrets: keys only via env/`.env` (git-ignored). Never print, log, trace, or commit keys; never paste them into prompts or docs.

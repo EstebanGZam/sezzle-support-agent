@@ -1,6 +1,5 @@
 # P-006 — Implementation authorization (verbatim, user → lead)
 
-- Date: 2026-09-27
 - Tool/agent: Claude Code (lead orchestrator, Opus 5.5)
 - Category: Planning prompt — **owner authorization record**
 

@@ -1,6 +1,6 @@
 # Implementation-Readiness Checklist (final)
 
-Updated 2026-09-27 after the owner's decisions (P-005). Implementation (IP-01, E-01) starts only on explicit owner authorization (OD-23).
+Updated after the owner's decisions (P-005). Implementation (IP-01, E-01) starts only on explicit owner authorization (OD-23).
 
 ## A. Specification package — complete
 - [x] Assessment materials in the documented layout, byte-identical, with provenance manifest; `sha256sum -c assessment/SHA256SUMS` passes (16/16); originals untouched.
@@ -14,7 +14,7 @@ Updated 2026-09-27 after the owner's decisions (P-005). Implementation (IP-01, E
 - [x] `DECISIONS.md` — 3 ADRs in the required format; model IDs filled in; `[MEASURE]` placeholders remain until real runs.
 - [x] `docs/decision-log.md` — OD-01…OD-23 (owner) vs AR-01…AR-09 (agent), with a status for each.
 - [x] Independent review R-00 (Codex): 13 findings, resolved (`docs/reviews/R-00-resolution.md`).
-- [x] Credential-provenance investigation (`docs/reviews/credential-provenance-2026-09-27.md`).
+- [x] Credential-provenance investigation (`docs/reviews/credential-provenance.md`).
 - [x] Every owner and agent prompt preserved (`PROMPTS.md`, `docs/planning/prompts/`).
 
 ## B. Environment & credentials
