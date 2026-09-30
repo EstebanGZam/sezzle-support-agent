@@ -188,6 +188,16 @@ else:                                                   route = "policy"   # inc
 | `MAX_LLM_CALLS_PER_BATCH` | `2000` | batch-level consumption guard; exceeding it → safe failure for the remaining cases |
 | `DATA_DIR` | `data` | policies + orders location |
 
+### 8.1 Groq provider (OD-26)
+- `LLM_PROVIDER=groq` uses `llm/groq.py` over plain `httpx` against the OpenAI-compatible Chat Completions endpoint. Key: **only** `GROQ_API_KEY`.
+- **Structured output:** Groq can't combine `response_format: json_schema` with tools, so the final answer is a function tool `submit_answer` whose parameters are the `FinalAnswer` schema.
+  - Tool mode `auto` → tools `[get_my_orders, submit_answer]`, `tool_choice="required"`.
+  - Tool mode `none` → tools `[submit_answer]` with a forced `tool_choice`. The model structurally can't look up again.
+  - `parallel_tool_calls=false`. The agent loop, validator, routing and contract are unchanged.
+- **Defaults:** `openai/gpt-oss-120b` primary, `openai/gpt-oss-20b` fallback, `reasoning_effort=low`, `LLM_MAX_OUTPUT_TOKENS=1024` for groq (reasoning tokens count toward completion), `include_reasoning=false`. The Gemini 10 s minimum timeout does not apply.
+- **Free-plan quotas** (8K TPM, 200K TPD per model): a per-batch, per-model token-bucket paces calls (`GROQ_TPM_BUDGET`), and the waits are recorded as `paced_ms`. Daily-quota 429 → `quota_daily` (that model is disabled for the batch, fallback used); other 429 → `rate_limit_minute` honouring `retry-after`; 498/503/504 → `overloaded`; 400 `tool_use_failed` → repair path.
+- **Eval runs** on Groq need `CASE_DEADLINE_S` ≈ 150–180 s, because pacing waits count against the case deadline.
+
 ## 9. Concurrency path (not built now)
 - `answer_case` is a pure function of `(Resources, LLMClient, Case)`, and `Resources` is immutable.
 - Bounded concurrency later = `ThreadPoolExecutor(max_workers=N)` or `asyncio` + `Semaphore(N)` around the same function, with output order restored by index.
