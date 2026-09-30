@@ -348,20 +348,33 @@ TOOL_USE_FAILED_GENERATION = (
 )
 
 
-def tool_use_failed(generation: Any = None, *, include: bool = True) -> httpx.Response:
+FAILED_GENERATION_MESSAGES = {
+    "tool_use_failed": "Tool choice is required, but model did not call a tool",
+    "output_parse_failed": (
+        "Parsing failed. The model generated output that could not be parsed. "
+        "Please adjust your prompt. See 'failed_generation' for more details."
+    ),
+}
+FAILED_GENERATION_CODES = pytest.mark.parametrize("code", sorted(FAILED_GENERATION_MESSAGES))
+
+
+def tool_use_failed(
+    generation: Any = None, *, include: bool = True, code: str = "tool_use_failed"
+) -> httpx.Response:
     err: dict[str, Any] = {
-        "message": "Tool choice is required, but model did not call a tool",
+        "message": FAILED_GENERATION_MESSAGES[code],
         "type": "invalid_request_error",
-        "code": "tool_use_failed",
+        "code": code,
     }
     if include:
         err["failed_generation"] = generation
     return httpx.Response(400, json={"error": err})
 
 
+@FAILED_GENERATION_CODES
 @pytest.mark.parametrize("tool_mode", ["auto", "none"])
-def test_tool_use_failed_answer_is_recovered_as_final_json(tool_mode: str) -> None:
-    client, server, _, _ = make_client([tool_use_failed(TOOL_USE_FAILED_GENERATION)])
+def test_tool_use_failed_answer_is_recovered_as_final_json(tool_mode: str, code: str) -> None:
+    client, server, _, _ = make_client([tool_use_failed(TOOL_USE_FAILED_GENERATION, code=code)])
     resp = client.generate(request(tool_mode=tool_mode))
     assert resp.final_json == {
         "answer": "…",
@@ -371,7 +384,7 @@ def test_tool_use_failed_answer_is_recovered_as_final_json(tool_mode: str) -> No
     }
     assert not resp.malformed and resp.function_calls == ()
     assert resp.raw_model_turn is None
-    assert resp.finish_reason == "tool_use_failed"
+    assert resp.finish_reason == code
     assert len(server.requests) == 1
     assert [without_estimate(a.to_dict()) for a in resp.attempts] == [
         {
@@ -381,7 +394,7 @@ def test_tool_use_failed_answer_is_recovered_as_final_json(tool_mode: str) -> No
             "error_class": None,
             "latency_ms": 0,
             "paced_ms": 0,
-            "recovered": "tool_use_failed",
+            "recovered": code,
         }
     ]
 
@@ -402,8 +415,9 @@ def test_tool_use_failed_answer_is_recovered_as_final_json(tool_mode: str) -> No
         {"answer": "an object, not a string"},
     ],
 )
-def test_tool_use_failed_without_a_valid_answer_is_malformed(generation: Any) -> None:
-    client, server, _, _ = make_client([tool_use_failed(generation)])
+@FAILED_GENERATION_CODES
+def test_tool_use_failed_without_a_valid_answer_is_malformed(generation: Any, code: str) -> None:
+    client, server, _, _ = make_client([tool_use_failed(generation, code=code)])
     resp = client.generate(request())
     assert resp.malformed and resp.raw_model_turn is None
     assert len(server.requests) == 1  # one attempt: no same-model retry, no fallback
@@ -419,24 +433,28 @@ def test_tool_use_failed_without_a_valid_answer_is_malformed(generation: Any) ->
     ]
 
 
+@FAILED_GENERATION_CODES
 @pytest.mark.parametrize(
-    "response",
+    "make_response",
     [
-        tool_use_failed(include=False),
-        tool_use_failed(None),
-        error(400, "Failed to call a function.", error_code="tool_use_failed"),
+        lambda code: tool_use_failed(include=False, code=code),
+        lambda code: tool_use_failed(None, code=code),
+        lambda code: error(400, "Failed to call a function.", error_code=code),
     ],
 )
-def test_tool_use_failed_without_failed_generation_is_malformed(response: httpx.Response) -> None:
-    client, server, _, _ = make_client([response])
+def test_tool_use_failed_without_failed_generation_is_malformed(
+    make_response: Callable[[str], httpx.Response], code: str
+) -> None:
+    client, server, _, _ = make_client([make_response(code)])
     resp = client.generate(request())
     assert resp.malformed and resp.raw_model_turn is None
     assert len(server.requests) == 1
     assert [(a.status, a.recovered) for a in resp.attempts] == [("ok", None)]
 
 
-def test_tool_use_failed_is_not_recovered_without_an_answer_schema() -> None:
-    client, _, _, _ = make_client([tool_use_failed(TOOL_USE_FAILED_GENERATION)])
+@FAILED_GENERATION_CODES
+def test_tool_use_failed_is_not_recovered_without_an_answer_schema(code: str) -> None:
+    client, _, _, _ = make_client([tool_use_failed(TOOL_USE_FAILED_GENERATION, code=code)])
     resp = client.generate(request(response_schema=None))
     assert resp.malformed
 
@@ -449,6 +467,8 @@ def test_tool_use_failed_is_not_recovered_without_an_answer_schema() -> None:
         httpx.Response(400, json={"error": "tool_use_failed"}),  # no error object
         httpx.Response(400, text="tool_use_failed"),  # not JSON
         error(422, "Unprocessable.", error_code="tool_use_failed"),  # not a 400
+        error(422, "Unprocessable.", error_code="output_parse_failed"),  # not a 400
+        error(400, "Parsing failed.", error_code="json_validate_failed"),  # another code
     ],
 )
 def test_other_4xx_stay_bad_request(response: httpx.Response) -> None:
@@ -1060,11 +1080,12 @@ def test_agent_trace_records_a_post_tool_413_detail_and_estimate() -> None:
     assert KEY not in result.trace.to_json()
 
 
-def test_agent_trace_records_a_recovered_tool_use_failed_answer() -> None:
+@FAILED_GENERATION_CODES
+def test_agent_trace_records_a_recovered_tool_use_failed_answer(code: str) -> None:
     resources = Resources.load(Settings.from_env({"LLM_PROVIDER": "fake"}))
     statics = AgentStatics.build(resources)
     lookup = completion([tool_call("get_my_orders", {}, "call_1")])
-    client, _, _, clock = make_client([ok(lookup), tool_use_failed(json.dumps(FINAL))])
+    client, _, _, clock = make_client([ok(lookup), tool_use_failed(json.dumps(FINAL), code=code)])
     case = Case(id="g1", user_id="u002", question="When is my next payment?")
     result = answer_case(resources, client, case, statics=statics, clock=clock)
     assert result.answer == FINAL["answer"]
@@ -1073,7 +1094,7 @@ def test_agent_trace_records_a_recovered_tool_use_failed_answer() -> None:
     first, second = result.trace.to_dict()["llm_calls"]
     assert "recovered" not in first["attempts"][0]
     assert second["outcome"] == "final"
-    assert second["attempts"][0]["recovered"] == "tool_use_failed"
+    assert second["attempts"][0]["recovered"] == code
 
 
 def test_recovered_answer_still_goes_through_the_agent_validator() -> None:

@@ -13,12 +13,13 @@
 - Normalization: a ``submit_answer`` call becomes ``final_json``; any other call becomes a
   ``FunctionCall`` (the agent executes only registered tools and rejects the rest); a turn with
   unparseable/non-object arguments, or with no tool call at all, is malformed (repair path).
-  A 400 ``tool_use_failed`` (Groq's server-side validation rejected the model's turn because it
-  was not a valid tool call) is never a provider error: when its ``failed_generation`` is a JSON
-  object that validates as the answer schema (the model wrote the answer as text instead of
-  calling ``submit_answer``), it becomes ``final_json`` and the attempt is traced as
-  ``recovered="tool_use_failed"``; anything else (a lookup-like call, invalid or partial JSON, no
-  ``failed_generation``) is a malformed attempt (repair path). Nothing parsed from it is executed.
+  A 400 ``tool_use_failed`` or ``output_parse_failed`` (Groq's server-side validation rejected
+  the model's turn because it was not a valid tool call or could not be parsed) is never a
+  provider error: when its ``failed_generation`` is a JSON object that validates as the answer
+  schema (the model wrote the answer as text instead of calling ``submit_answer``), it becomes
+  ``final_json`` and the attempt is traced as ``recovered=<error code>``; anything else (a
+  lookup-like call, invalid or partial JSON, no ``failed_generation``) is a malformed attempt
+  (repair path). Nothing parsed from it is executed.
 - History: OpenAI chat format. ``system`` message = the static prefix; ``raw_model_turn`` is the
   assistant message dict exactly as returned and is replayed unchanged; tool results become
   ``tool`` messages with their ``tool_call_id``. A replayed call that got no result (a
@@ -49,8 +50,8 @@ Error classification (``classify_response``), per the §7 table:
 - 429 → ``quota_daily`` when the daily request budget is spent (``x-ratelimit-remaining-requests``
   is ``0``: Groq's request headers are per day) or the message names a per-day limit (TPD/RPD);
   otherwise ``rate_limit_minute``, honouring ``retry-after`` before the next attempt on that model.
-- Other 4xx (except a 400 ``tool_use_failed``, see above) → ``bad_request``; 498/503/504 →
-  ``overloaded``; other 5xx → ``server_5xx``.
+- Other 4xx (except a 400 ``tool_use_failed``/``output_parse_failed``, see above) →
+  ``bad_request``; 498/503/504 → ``overloaded``; other 5xx → ``server_5xx``.
 - Client timeouts → ``timeout``; other transport failures or an unreadable 200 body →
   ``server_5xx``.
 - ``finish_reason == "content_filter"`` → ``blocked_safety``.
@@ -97,6 +98,9 @@ GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 CHAT_COMPLETIONS_PATH = "/chat/completions"
 SUBMIT_ANSWER = "submit_answer"
 TOOL_USE_FAILED = "tool_use_failed"
+OUTPUT_PARSE_FAILED = "output_parse_failed"
+# 400 error codes whose ``failed_generation`` holds the model's turn (see the module docstring).
+FAILED_GENERATION_CODES = frozenset({TOOL_USE_FAILED, OUTPUT_PARSE_FAILED})
 SUBMIT_ANSWER_DESCRIPTION = (
     "Submit the final answer to the shopper. The arguments are the complete final answer, "
     "the JSON object described in the instructions. Call it exactly once, when ready to answer."
@@ -219,9 +223,9 @@ class GroqClient:
                 ) from None
 
             if response.status_code != 200:
-                if _is_tool_use_failed(response):
-                    # The model's turn failed Groq's tool-call validation: not a provider error.
-                    return recover_tool_use_failed(response, req.response_schema)
+                if (code := _failed_generation_code(response)) is not None:
+                    # The model's turn failed Groq's server-side validation: not a provider error.
+                    return recover_tool_use_failed(response, req.response_schema, code=code)
                 notes[-1]["detail"] = error_detail(response, self._secret)
                 err = classify_response(
                     response,
@@ -569,12 +573,13 @@ def to_attempt_output(data: Mapping[str, Any], *, model: str) -> AttemptOutput:
 
 
 def recover_tool_use_failed(
-    response: httpx.Response, schema: type[BaseModel] | None
+    response: httpx.Response, schema: type[BaseModel] | None, *, code: str = TOOL_USE_FAILED
 ) -> AttemptOutput:
-    """A 400 ``tool_use_failed`` → ``final_json`` if its ``failed_generation`` is a JSON object
-    that validates as ``schema`` (an answer written as text instead of a ``submit_answer`` call),
-    else a malformed attempt. The object is returned as parsed: the agent validates it as usual."""
-    malformed = AttemptOutput(finish_reason=TOOL_USE_FAILED)
+    """A 400 ``tool_use_failed``/``output_parse_failed`` (``code``) → ``final_json`` if its
+    ``failed_generation`` is a JSON object that validates as ``schema`` (an answer written as text
+    instead of a ``submit_answer`` call), else a malformed attempt. The object is returned as
+    parsed: the agent validates it as usual."""
+    malformed = AttemptOutput(finish_reason=code)
     generation = _error_object(response).get("failed_generation")
     if schema is None or not isinstance(generation, str):
         return malformed
@@ -585,9 +590,7 @@ def recover_tool_use_failed(
         schema.model_validate(answer)
     except ValidationError:
         return malformed
-    return AttemptOutput(
-        final_json=answer, finish_reason=TOOL_USE_FAILED, recovered=TOOL_USE_FAILED
-    )
+    return AttemptOutput(final_json=answer, finish_reason=code, recovered=code)
 
 
 def _parse_args(arguments: Any) -> dict[str, Any] | None:
@@ -710,11 +713,12 @@ def _is_daily_limit(response: httpx.Response, error_message: str) -> bool:
     return bool(_DAILY_HINT_RE.search(error_message))
 
 
-def _is_tool_use_failed(response: httpx.Response) -> bool:
+def _failed_generation_code(response: httpx.Response) -> str | None:
+    """The error code of a 400 whose ``failed_generation`` holds the model's turn, else None."""
     if response.status_code != 400:
-        return False
-    error = _error_object(response)
-    return error.get("code") == TOOL_USE_FAILED
+        return None
+    code = _error_object(response).get("code")
+    return code if code in FAILED_GENERATION_CODES else None
 
 
 def _error_object(response: httpx.Response) -> Mapping[str, Any]:
