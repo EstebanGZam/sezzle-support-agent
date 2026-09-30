@@ -34,7 +34,25 @@ Runs 001–003 took place during a Gemini capacity incident: `HTTP 503 UNAVAILAB
 - We treat it as a product-clarity change: the brand-voice rule is transparency about what happens next.
 - The rule is one generic sentence pattern, never case-specific strings.
 
-## 3. Planned sequence (clean attribution)
+## 3. Provider migration and iteration 2 (Groq, OD-26)
+
+| Run | Change | Golden pass / route | Dev pass / route | Infra safe-failures | Service latency p50 / p95 per attempt |
+|---|---|---|---|---|---|
+| 004 | Provider → Groq `gpt-oss-120b` (fallback 20b), prompt v1 | **6/10 / 9/10** | **12/25 / 16/25** | 4 `bad_request` + 2 `validation_exhausted` | 0.84 s / 1.3 s |
+| 005 | Prompt v2 (iteration 2) + adapter infra fixes | **7/10 / 8/10** | *pending: Groq free daily quota* | 1 `output_parse_failed` (since fixed), 1 `quota_daily` failover | see run notes |
+
+- **Provider effect (003 → 004):**
+  - Golden pass went from 3/10 to 6/10 and dev from 5/25 to 12/25.
+  - Infra safe failures went from 21/35 to 6/35.
+  - The behaviour classes seen on Gemini's valid answers reappeared on Groq, which supports the conclusion that they are prompt-level, not provider-level.
+- **Infra taxonomy found on Groq (fixed in the adapter; not behaviour):**
+  - `tool_use_failed` and `output_parse_failed`: the model emits the answer JSON as text. It is recovered from `failed_generation` and still validated (AR-10).
+  - 413 on TPM-window saturation: now a rate limit; an oversized request is still a bad request.
+  - Provider error `detail` is now traced. Without it the 400s could not be diagnosed from artifacts.
+- **Iteration 2 (prompt v2) on golden:** +1 case (6 → 7). The route changed on one case. Full attribution waits for the dev set.
+- **Constraint discovered:** the free plan allows 200K tokens/day per model (rolling 24 h). One full golden + dev run is about 300K tokens, which bounds how many measured iterations fit per day.
+
+## 4. Earlier planned sequence (kept for the record)
 1. **Run 004** — new provider, prompt v1 (the current `main`). Isolates the provider change.
 2. **Run 005** — prompt v2 (iteration 2, prepared on a separate branch from the classes above), same provider. Isolates the prompt change.
 3. **Final run** — golden + dev + holdout (copied in once, never tuned against).
