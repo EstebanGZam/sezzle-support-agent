@@ -32,7 +32,21 @@ Required by the brief: "the prompts you used to build (including scaffolding ask
 | IP-01… | Implementation prompts (to be dispatched after authorization) | per `docs/implementation-prompts.md` | as sent, logged here at dispatch time | — | — |
 
 ## 3. System prompts (inside the assistant)
-_To be recorded at implementation time: full text of the static system prefix and case template, with `PROMPT_VERSION` per change and the eval run that motivated each change._
+
+**Structure:**
+- The **system instruction** is a static prefix, byte-identical for every case: the instructions below, then all 12 policies rendered as `[POL-NN] <title>` + text from `data/policies/`. See `src/support_agent/prompts.py` → `build_system_prompt`.
+- The **per-case user turn** comes from `build_case_message`: `Today is <frozen date>.`, plus an optional one-way tripwire note. The shopper's text goes inside `<shopper_message>…</shopper_message>` and is declared untrusted data. Tag look-alikes inside the text are neutralised.
+- **Tool declaration** (`get_my_orders`, read-only, no user field) and the **final-answer schema** (`FinalAnswer`: `answer`, `escalation_reason`, `policy_applied`, `cited_policies`) are sent as structured tool/schema definitions.
+  - Gemini: `response_schema`.
+  - Groq: a `submit_answer` function.
+- `PROMPT_VERSION` = sha256 of prefix + tool declarations + answer schema (16 hex chars). It is recorded in every run's `config.json`.
+
+| Version | Instruction text (verbatim) | `PROMPT_VERSION` | Used in runs | Motivated by |
+|---|---|---|---|---|
+| v1 | `docs/system-prompts/v1-instructions.txt` | `3103d85377df1a31` | 001–004 | Initial spec (T-06): scope, grounding, escalation guidance, voice, output contract |
+| v2 | `docs/system-prompts/v2-instructions.txt` | `e1143a2c8857656f` | 005+ | Iteration 2: behaviour failures on valid answers in runs 003/004. Rules added for decision boundaries (no escalation when policy gives a definitive answer; no tool use for hypotheticals; injection doesn't block a legitimate lookup), policy consequences, and explicit hand-off. The generation prompt is A-029 |
+
+The diff between v1 and v2 is `git diff --no-index docs/system-prompts/v1-instructions.txt docs/system-prompts/v2-instructions.txt`.
 
 ## 4. Evaluation prompts & probes
 
